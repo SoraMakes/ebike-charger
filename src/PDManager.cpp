@@ -131,8 +131,15 @@ void PDManager::_requestPDO(HUSB238_PDSelection pdo) {
 }
 
 float PDManager::_voltageFromSelection(HUSB238_PDSelection sel) {
-    size_t idx = static_cast<size_t>(sel);
-    return (idx < (sizeof(kVoltages) / sizeof(kVoltages[0]))) ? kVoltages[idx] : 0.0f;
+    switch (sel) {
+        case PD_SRC_5V:  return 5.0f;
+        case PD_SRC_9V:  return 9.0f;
+        case PD_SRC_12V: return 12.0f;
+        case PD_SRC_15V: return 15.0f;
+        case PD_SRC_18V: return 18.0f;
+        case PD_SRC_20V: return 20.0f;
+        default:         return 0.0f;
+    }
 }
 
 float PDManager::_voltageFromActiveSetting(HUSB238_VoltageSetting vs) {
