@@ -2,12 +2,12 @@
 #include <Wire.h>
 #include "PDManager.h"
 
-static constexpr int I2C_SDA_PIN = 33;
-static constexpr int I2C_SCL_PIN = 35;
-static constexpr uint32_t kSerialWaitMs = 3000;
+static constexpr int     I2C_SDA_PIN       = 33;
+static constexpr int     I2C_SCL_PIN       = 35;
+static constexpr uint32_t kSerialWaitMs    = 3000;
+static constexpr float   kMinChargeVoltage = 7.0f;  // TODO: enable boost converter above this threshold
 
 static PDManager pdManager;
-static PDMode    currentPDMode = PDMode::NO_CHARGER;
 
 void setup() {
     Serial.begin(115200);
@@ -17,52 +17,25 @@ void setup() {
         delay(10);
     }
 
-    Serial.println("\n\n=== USB PD Controller ===");
+    Serial.println("\n\n=== USB PD Charger ===");
 
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
-    if (!pdManager.begin(Wire)) {
-        Serial.println("[SYSTEM] ERROR: PD controller not found on I2C. Halting.");
-        while (true) {
-            delay(1000);
-        }
+    while (!pdManager.begin(Wire)) {
+        Serial.println("[SYSTEM] ERROR: PD controller not found on I2C. Retrying...");
+        delay(2000);
     }
-
-    currentPDMode = pdManager.detectMode();
-
-    Serial.println("────────────────────────────────────────────────");
-    switch (currentPDMode) {
-        case PDMode::NO_CHARGER:
-            Serial.println("[SYSTEM] Mode 1: No charger detected.");
-            break;
-        case PDMode::FIVE_VOLT_ONLY:
-            Serial.println("[SYSTEM] Mode 1: 5V only (PD unavailable).");
-            break;
-        case PDMode::HIGH_VOLTAGE:
-            Serial.printf("[SYSTEM] Mode 3: Active (%.0fV @ %.2fA).\n",
-                          pdManager.getNegotiatedVoltage(), pdManager.getNegotiatedCurrentAmps());
-            break;
-        default:
-            break;
-    }
-    Serial.println("────────────────────────────────────────────────");
 }
 
 void loop() {
-    switch (currentPDMode) {
-        case PDMode::HIGH_VOLTAGE:
-            Serial.println("[Mode 3] Active.");
-            delay(5000);
-            break;
+    const float voltage = pdManager.getVoltage();
+    const float current = pdManager.getCurrent();
+    const float wattage = pdManager.getWattage();
 
-        case PDMode::NO_CHARGER:
-        case PDMode::FIVE_VOLT_ONLY:
-            Serial.println("[Mode 1] Idle.");
-            delay(10000);
-            break;
+    Serial.printf("[PD] %.0fV  %.2fA  %.1fW\n", voltage, current, wattage);
 
-        default:
-            delay(1000);
-            break;
-    }
+    // TODO: enable boost converter when voltage is sufficient for charging
+    // if (voltage >= kMinChargeVoltage) { ... }
+
+    delay(2000);
 }
