@@ -2,8 +2,8 @@
 #include <Wire.h>
 #include "PDManager.h"
 
-static constexpr int     I2C_SDA_PIN       = 33;
-static constexpr int     I2C_SCL_PIN       = 35;
+static constexpr int     I2C_SDA_PIN       = 4;  // D2
+static constexpr int     I2C_SCL_PIN       = 5;  // D1
 static constexpr uint32_t kSerialWaitMs    = 3000;
 static constexpr uint32_t kPdNegotiationTimeoutMs = 10000;
 static constexpr float   kMinChargeVoltage = 7.0f;
@@ -79,12 +79,13 @@ void loop() {
         sourceWasAttached = false;
         requestPending = false;
         Serial.println("[PD] No power source attached.");
+        pdManager.resetAndRefreshSource();  // only for debugging when connected via usb to pc. allows plugging in and out the pd source / plugging it in at any time
+
         delay(1000);
         return;
     }
 
     if (!sourceWasAttached) {
-        pdManager.resetAndRefreshSource();
         sourceWasAttached = true;
         requestPending = false;
         Serial.println("[PD] New power source detected; refreshing capabilities.");
