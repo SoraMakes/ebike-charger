@@ -8,6 +8,13 @@ bool PDManager::isAttached() {
     return _husb.isAttached();
 }
 
+void PDManager::resetAndRefreshSource() {
+    _husb.reset();
+    delay(300);
+    _husb.getSourceCapabilities();
+    delay(300);
+}
+
 bool PDManager::requestHighestVoltagePdo(float &voltage, float &current) {
     static constexpr struct { HUSB238_PDSelection sel; float volts; } kPDOs[] = {
         {PD_SRC_5V, 5.f}, {PD_SRC_9V, 9.f}, {PD_SRC_12V, 12.f},

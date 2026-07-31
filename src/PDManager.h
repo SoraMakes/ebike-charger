@@ -10,6 +10,7 @@ public:
 
     bool begin(TwoWire &wire);
     bool isAttached();
+    void resetAndRefreshSource();
     bool requestHighestVoltagePdo(float &voltage, float &current);
     bool hasPDRequestFailed();
 
