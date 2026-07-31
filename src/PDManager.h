@@ -9,6 +9,9 @@ public:
     PDManager() = default;
 
     bool begin(TwoWire &wire);
+    bool isAttached();
+    bool requestHighestVoltagePdo(float &voltage, float &current);
+    bool hasPDRequestFailed();
 
     float getVoltage();
     float getCurrent();
