@@ -1,14 +1,32 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include "PDManager.h"
+// #include "ThermalManager.h"
+// #include "PowerMonitor.h"
+#include "CurrentControl.h"
 
-static constexpr int     I2C_SDA_PIN       = 4;  // D2
-static constexpr int     I2C_SCL_PIN       = 5;  // D1
-static constexpr uint32_t kSerialWaitMs    = 3000;
-static constexpr uint32_t kPdNegotiationTimeoutMs = 10000;
-static constexpr float   kMinChargeVoltage = 7.0f;
+static constexpr int      I2C_SDA_PIN              = 4;     // D2
+static constexpr int      I2C_SCL_PIN              = 5;     // D1
+static constexpr uint32_t kPdNegotiationTimeoutMs  = 10000;
+static constexpr float    kMinChargeVoltage        = 7.0f;
 
-static PDManager pdManager;
+// // TODO: assign real pins
+// static constexpr uint8_t kNtcPin = A0;
+// static constexpr uint8_t kFanPin = D5;
+
+static PDManager      pdManager;
+// static ThermalManager thermalManager;
+// static PowerMonitor   powerMonitor;
+static CurrentControl currentControl;
+
+static bool isDue(uint32_t &lastRun, uint32_t intervalMs) {
+    const uint32_t now = millis();
+    if (now - lastRun >= intervalMs) {
+        lastRun = now;
+        return true;
+    }
+    return false;
+}
 
 static void handleBelowMinimumVoltage(bool &requestPending, uint32_t &requestStartedAt) {
     if (!requestPending) {
@@ -40,69 +58,102 @@ static void handleBelowMinimumVoltage(bool &requestPending, uint32_t &requestSta
     }
 }
 
-static void handleAboveMinimumVoltage(bool &requestPending,
-                                      float voltage,
-                                      float current) {
-    requestPending = false;
-    Serial.printf("[PD] State: higher voltage negotiated (%.0fV, %.2fA).\n",
-                  voltage, current);
-    Serial.println("[CHARGER] Turn output on.");
-    Serial.println("[CHARGER] Adjust output current.");
-}
-
 void setup() {
     Serial.begin(115200);
-
-    const uint32_t deadline = millis() + kSerialWaitMs;
-    while (!Serial && millis() < deadline) {
-        delay(10);
-    }
 
     Serial.println("\n\n=== USB PD Charger ===");
 
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
+    currentControl.begin(Wire);
+    currentControl.safe();
+
     while (!pdManager.begin(Wire)) {
         Serial.println("[SYSTEM] ERROR: PD controller not found on I2C. Retrying...");
         delay(2000);
     }
+
+    // thermalManager.begin(kNtcPin, kFanPin);
+
+
+    // if (!powerMonitor.begin(Wire)) {
+    //     Serial.println("[SYSTEM] WARNING: INA219 not found on I2C.");
+    // }
 }
 
 void loop() {
-    static bool requestPending = false;
-    static uint32_t requestStartedAt = 0;
-    static bool sourceWasAttached = false;
+    static bool     requestPending    = false;
+    static uint32_t requestStartedAt  = 0;
+    static bool     sourceWasAttached = false;
+    static bool     sourceDetecting   = false;
+    static uint32_t sourceDetectedAt  = 0;
+    // static uint32_t lastThermalUpdate = 0;
+    static uint32_t lastCurrentUpdate = 0;
+    static uint32_t lastPdPrint       = 0;
+    static uint32_t lastPdNegotiate   = 0;
+    static uint32_t lastNoSourceLog   = 0;
+
+    // // Thermal & fan always run, regardless of PD state
+    // if (isDue(lastThermalUpdate, 500)) {
+    //     thermalManager.update();
+    //     Serial.printf("[THERM] %.1f°C\n", thermalManager.getTemperatureC());
+    // }
 
     const float voltage = pdManager.getVoltage();
 
     if (!pdManager.isAttached() || voltage == 0.0f) {
-        sourceWasAttached = false;
-        requestPending = false;
-        Serial.println("[PD] No power source attached.");
-        pdManager.resetAndRefreshSource();  // only for debugging when connected via usb to pc. allows plugging in and out the pd source / plugging it in at any time
-
-        delay(1000);
+        if (sourceWasAttached) {
+            currentControl.safe();
+            sourceWasAttached = false;
+            requestPending    = false;
+            Serial.println("[PD] Power source disconnected.");
+        }
+        if (isDue(lastNoSourceLog, 1000)) {
+            Serial.println("[PD] No power source attached.");
+            pdManager.resetAndRefreshSource();  // only for debugging; allows hot-plug
+        }
         return;
     }
 
+    // Debounce new source attachment
     if (!sourceWasAttached) {
+        if (!sourceDetecting) {
+            sourceDetecting  = true;
+            sourceDetectedAt = millis();
+            requestPending   = false;
+            Serial.println("[PD] New power source detected; refreshing capabilities.");
+        }
+        if (millis() - sourceDetectedAt < 2000) return;
         sourceWasAttached = true;
-        requestPending = false;
-        Serial.println("[PD] New power source detected; refreshing capabilities.");
-        delay(2000);
-        return;
+        sourceDetecting   = false;
     }
 
-    const float current = pdManager.getCurrent();
-    const float wattage = pdManager.getWattage();
-
-    Serial.printf("[PD] %.0fV  %.2fA  %.1fW\n", voltage, current, wattage);
+    if (isDue(lastPdPrint, 2000)) {
+        Serial.printf("[PD] %.0fV  %.2fA  %.1fW\n",
+                      voltage, pdManager.getCurrent(), pdManager.getWattage());
+    }
 
     if (voltage < kMinChargeVoltage) {
-        handleBelowMinimumVoltage(requestPending, requestStartedAt);
-    } else {
-        handleAboveMinimumVoltage(requestPending, voltage, current);
+        currentControl.safe();
+        if (isDue(lastPdNegotiate, 2000)) {
+            handleBelowMinimumVoltage(requestPending, requestStartedAt);
+        }
+        return;
     }
 
-    delay(2000);
+    // Voltage is good — run current control every 100 ms
+    if (isDue(lastCurrentUpdate, 100)) {
+        // powerMonitor.update();
+
+        const float pdPowerLimit = pdManager.getWattage();
+        // const float thermalLimit = thermalManager.getCurrentLimit();
+        // const float inputLimit   = powerMonitor.getCurrentLimit();
+        // const float powerLimit  = min(pdPowerLimit, min(thermalLimit, inputLimit));
+        const float powerLimit   = pdPowerLimit;
+
+        currentControl.update(powerLimit);
+
+        // Serial.printf("[CHARGER] limit=%.2fA  (pd=%.2f  therm=%.2f  input=%.2f)\n",
+        //               limit, pdLimit, thermalLimit, inputLimit);
+    }
 }
