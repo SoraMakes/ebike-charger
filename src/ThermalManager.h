@@ -1,23 +1,43 @@
 #pragma once
 
 #include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_AHTX0.h>
 
-/// Manages the thermal safety fan.
+/// Measures ambient temperature and manages thermal fan and charge limits.
 class ThermalManager {
 public:
-    /// Initializes the fan output.
-    /// @param fanPin Output connected to the fan driver.
-    void begin(uint8_t fanPin);
+    /// Initializes the AHT10 and fan output.
+    /// @return true when the temperature sensor was detected.
+    bool begin(TwoWire &wire, uint8_t fanPin);
 
-    /// Reapplies the fixed safety-fan output.
-    ///
-    /// The current implementation intentionally does not read temperature.
-    /// Temperature-dependent control will be added once the NTC input and
-    /// thermal limits are defined.
-    void  update();
+    /// Updates the temperature state and fan output.
+    /// Call periodically, approximately once per second.
+    void update();
+
+    /// Returns the most recent temperature in degrees Celsius.
+    float getTemperatureC() const;
+
+    /// Returns the thermally permitted output power in watts, from 0 to 100.
+    float getOutputPowerLimitW() const;
+
+    /// Returns true when the sensor is unavailable or a reading failed.
+    bool hasSensorFault() const;
+
+    /// Returns true after an overtemperature or sensor-fault shutdown.
+    bool isShutdownLatched() const;
 
 private:
-    uint8_t _fanPin = 0;
+    static constexpr uint16_t kPwmRange = 1023;
+    static constexpr uint32_t kFanPwmFrequencyHz = 16000;
 
-    void  applyFanPwm() const;
+    Adafruit_AHTX0 _sensor;
+    uint8_t _fanPin = 0;
+    float _temperatureC = 25.0f;
+    float _outputPowerLimitW = 0.0f;
+    bool _sensorFault = true;
+    bool _shutdownLatched = false;
+
+    void applyFanPwm(uint16_t duty) const;
+    void enterShutdown(const char *reason);
 };
