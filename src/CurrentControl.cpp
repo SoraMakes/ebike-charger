@@ -6,6 +6,8 @@ static constexpr uint8_t kMCP4018Address = 0x2F; // hardware-fixed
 static constexpr uint8_t kRegulatorEnablePin = D5;
 
 static constexpr uint8_t kMaxStep = 127;
+static constexpr uint32_t kIncreaseIntervalMs = 250;
+static constexpr uint32_t kVoltageLogIntervalMs = 1000;
 
 // Measured output-current calibration: 0.13 A at step 0, +0.0715 A per step.
 static constexpr float kCurrentAtStepZeroA   = 0.13f;  // digipot: 125 Ohm
@@ -15,6 +17,7 @@ static constexpr float kMaxAllowedOutputAmps = 3.0f;  // Software safety limit
 void CurrentControl::begin(TwoWire &wire, VoltageMonitor &voltageMonitor) {
     _wire = &wire;
     _voltageMonitor = &voltageMonitor;
+    _lastDigipotStep = -1;
     pinMode(kRegulatorEnablePin, OUTPUT);
     digitalWrite(kRegulatorEnablePin, LOW);
     safe();
@@ -42,14 +45,22 @@ void CurrentControl::test(uint8_t maxLevel) {
     }
 }
 
+void CurrentControl::test_set_fixed(uint8_t level) {
+    const uint8_t testLevel = min(level, kMaxStep);
+
+    _powerLevel = testLevel;
+    writeDigipot(testLevel);
+    digitalWrite(kRegulatorEnablePin, HIGH);
+    Serial.printf("[CURRENT TEST] level %u, digipot step %u\n",
+                  testLevel, testLevel);
+    delay(5*60*1000);  // 5 minutes
+}
+
 void CurrentControl::update(float limitWatts) {
     const int16_t previousLevel = _powerLevel;
+    const uint32_t now = millis();
     _voltageMonitor->update();
     const float outputVoltageV = _voltageMonitor->getVoltage();
-
-    Serial.printf("[OUTPUT VOLTAGE] raw=%d voltage=%.2fV\n",
-                  _voltageMonitor->getRawReading(),
-                  outputVoltageV);
 
 
     if (limitWatts <= 0.0f || !isfinite(outputVoltageV) || outputVoltageV <= 0.0f) {
@@ -61,7 +72,8 @@ void CurrentControl::update(float limitWatts) {
     }
 
     const float targetAmps = limitWatts / outputVoltageV;
-    const int16_t targetLevel = ampsToStep(min(targetAmps, kMaxAllowedOutputAmps));
+    const float currentLimitA = min(targetAmps, kMaxAllowedOutputAmps);
+    const int16_t targetLevel = ampsToStep(currentLimitA);
 
     if (targetLevel < 0) {
         safe();
@@ -73,8 +85,9 @@ void CurrentControl::update(float limitWatts) {
 
     if (_powerLevel > targetLevel) {
         _powerLevel = targetLevel;
-    } else if (_powerLevel < targetLevel) {
+    } else if (_powerLevel < targetLevel && now - _lastIncreaseAt >= kIncreaseIntervalMs) {
         ++_powerLevel;
+        _lastIncreaseAt = now;
     }
 
     const uint8_t step = static_cast<uint8_t>(_powerLevel);
@@ -82,8 +95,9 @@ void CurrentControl::update(float limitWatts) {
     digitalWrite(kRegulatorEnablePin, HIGH);
 
     if (_powerLevel != previousLevel) {
-        Serial.printf("[CURRENT CONTROL] level %d, digipot step %u\n",
-                      _powerLevel, step);
+        const float configuredCurrentA = kCurrentAtStepZeroA + static_cast<float>(_powerLevel) * kCurrentPerStepA;
+        Serial.printf("[CURRENT CONTROL] level: %d, digipot step: %u, output voltage: %.2fV, limit: %.2fA %.2fW\n",
+                      _powerLevel, step, outputVoltageV, configuredCurrentA, outputVoltageV * configuredCurrentA);
     }
 }
 
@@ -93,10 +107,17 @@ void CurrentControl::safe() {
     writeDigipot(0);
 }
 
-void CurrentControl::writeDigipot(uint8_t step) const {
+void CurrentControl::writeDigipot(uint8_t step) {
+    if (_lastDigipotStep == step) {
+        return;
+    }
+
+//    Serial.printf("[DIGIPOT] writing step %u\n", step);
     _wire->beginTransmission(kMCP4018Address);
     _wire->write(step);
-    _wire->endTransmission();
+    if (_wire->endTransmission() == 0) {
+        _lastDigipotStep = step;
+    }
 }
 
 int16_t CurrentControl::ampsToStep(float amps) {

@@ -23,12 +23,19 @@ public:
     /// @param maxLevel Highest digipot level to test.
     void test(uint8_t maxLevel);
 
+    /// Tests the regulator at a fixed digipot level.
+    /// @param level Digipot level to test.
+    void test_set_fixed(uint8_t level);
+
 private:
     TwoWire *_wire         = nullptr;
     VoltageMonitor *_voltageMonitor = nullptr;
     /// Level -1 disables the regulator; level 0 enables it at digipot step 0.
     int16_t  _powerLevel   = -1;
+    int16_t  _lastDigipotStep = -1;
+    uint32_t _lastIncreaseAt = 0;
+    uint32_t _lastVoltageLogAt = 0;
 
-    void    writeDigipot(uint8_t step) const;
+    void    writeDigipot(uint8_t step);
     static int16_t ampsToStep(float amps);
 };

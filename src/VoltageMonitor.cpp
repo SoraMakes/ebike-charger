@@ -4,9 +4,8 @@
 static constexpr float kAdcVoltageFullScaleV = 51.86f;
 static constexpr float kAdcResolution       = 1024.0f;
 
-// Two-point calibration: 29.725 V -> 29.9 V and 41.50 V -> 41.8 V.
-static constexpr float kVoltageCalibrationGain    = 0.980;
-static constexpr float kVoltageCalibrationOffsetV = 0.0f;
+// Gain calibration based on 29.725 V -> 29.9 V and 41.50 V -> 41.8 V.
+static constexpr float kVoltageCalibrationGain = 0.980;
 
 void VoltageMonitor::begin(uint8_t adcPin) {
     _adcPin = adcPin;
@@ -17,8 +16,7 @@ void VoltageMonitor::update() {
     _rawReading = analogRead(_adcPin);
     const float dividerVoltageV = static_cast<float>(_rawReading) *
                                   (kAdcVoltageFullScaleV / kAdcResolution);
-    _voltageV = dividerVoltageV * kVoltageCalibrationGain +
-                kVoltageCalibrationOffsetV;
+    _voltageV = dividerVoltageV * kVoltageCalibrationGain;
 }
 
 float VoltageMonitor::getVoltage() const {
