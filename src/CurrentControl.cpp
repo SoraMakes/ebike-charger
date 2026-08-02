@@ -11,15 +11,16 @@ static constexpr uint8_t kMaxStep = 127;
 static constexpr float kCurrentAtStepZeroA   = 0.13f;  // digipot: 125 Ohm
 static constexpr float kCurrentPerStepA      = 0.0715f;  // digipot: 35,8 Ohm per step
 static constexpr float kMaxAllowedOutputAmps = 3.0f;  // Software safety limit
-static constexpr float kAssumedOutputVoltageV = 42.0f; // TODO: get actual voltage
 
-void CurrentControl::begin(TwoWire &wire) {
+void CurrentControl::begin(TwoWire &wire, VoltageMonitor &voltageMonitor) {
     _wire = &wire;
+    _voltageMonitor = &voltageMonitor;
     pinMode(kRegulatorEnablePin, OUTPUT);
     digitalWrite(kRegulatorEnablePin, LOW);
     safe();
 }
 
+// TODO: remove again!
 void CurrentControl::test(uint8_t maxLevel) {
     const uint8_t testMaxLevel = min(maxLevel, kMaxStep);
 
@@ -43,8 +44,15 @@ void CurrentControl::test(uint8_t maxLevel) {
 
 void CurrentControl::update(float limitWatts) {
     const int16_t previousLevel = _powerLevel;
+    _voltageMonitor->update();
+    const float outputVoltageV = _voltageMonitor->getVoltage();
 
-    if (limitWatts <= 0.0f) {
+    Serial.printf("[OUTPUT VOLTAGE] raw=%d voltage=%.2fV\n",
+                  _voltageMonitor->getRawReading(),
+                  outputVoltageV);
+
+
+    if (limitWatts <= 0.0f || !isfinite(outputVoltageV) || outputVoltageV <= 0.0f) {
         safe();
         if (_powerLevel != previousLevel) {
             Serial.println("[CURRENT CONTROL] level -1, digipot step 0");
@@ -52,7 +60,7 @@ void CurrentControl::update(float limitWatts) {
         return;
     }
 
-    const float targetAmps = limitWatts / kAssumedOutputVoltageV;
+    const float targetAmps = limitWatts / outputVoltageV;
     const int16_t targetLevel = ampsToStep(min(targetAmps, kMaxAllowedOutputAmps));
 
     if (targetLevel < 0) {

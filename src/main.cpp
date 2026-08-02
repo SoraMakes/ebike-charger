@@ -4,6 +4,7 @@
 // #include "ThermalManager.h"
 // #include "PowerMonitor.h"
 #include "CurrentControl.h"
+#include "VoltageMonitor.h"
 
 static constexpr int      I2C_SDA_PIN              = 4;     // D2
 static constexpr int      I2C_SCL_PIN              = 5;     // D1
@@ -18,6 +19,7 @@ static PDManager      pdManager;
 // static ThermalManager thermalManager;
 // static PowerMonitor   powerMonitor;
 static CurrentControl currentControl;
+static VoltageMonitor voltageMonitor;
 
 static bool isDue(uint32_t &lastRun, uint32_t intervalMs) {
     const uint32_t now = millis();
@@ -65,7 +67,8 @@ void setup() {
 
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
-    currentControl.begin(Wire);
+    voltageMonitor.begin(A0);
+    currentControl.begin(Wire, voltageMonitor);
     // currentControl.test(20);
 
     while (!pdManager.begin(Wire)) {

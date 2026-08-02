@@ -2,14 +2,15 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include "VoltageMonitor.h"
 
 /// Controls the regulator enable state and open-loop charge-current setpoint.
 class CurrentControl {
 public:
-    /// Initializes the controller on the specified I2C bus at a safe output level.
-    void begin(TwoWire &wire);
+    /// Initializes the controller and voltage monitor at a safe output level.
+    void begin(TwoWire &wire, VoltageMonitor &voltageMonitor);
 
-    /// Applies an upper bound to the output power.
+    /// Applies an upper bound to the output power at the measured output voltage.
     /// The setpoint decreases immediately when it exceeds the bound and increases
     /// gradually when additional power is available.
     /// @param limitWatts Maximum permitted output power in watts.
@@ -24,6 +25,7 @@ public:
 
 private:
     TwoWire *_wire         = nullptr;
+    VoltageMonitor *_voltageMonitor = nullptr;
     /// Level -1 disables the regulator; level 0 enables it at digipot step 0.
     int16_t  _powerLevel   = -1;
 
