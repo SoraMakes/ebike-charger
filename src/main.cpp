@@ -8,7 +8,7 @@
 static constexpr int      I2C_SDA_PIN              = 4;     // D2
 static constexpr int      I2C_SCL_PIN              = 5;     // D1
 static constexpr uint32_t kPdNegotiationTimeoutMs  = 10000;
-static constexpr float    kMinChargeVoltage        = 7.0f;
+static constexpr float    kMinChargeVoltage        = 8.5f;  // Minimum voltage required to enable the charger (eg minimum voltage of the boost converter)
 
 // // TODO: assign real pins
 // static constexpr uint8_t kNtcPin = A0;
@@ -66,7 +66,7 @@ void setup() {
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
     currentControl.begin(Wire);
-    currentControl.safe();
+    // currentControl.test(20);
 
     while (!pdManager.begin(Wire)) {
         Serial.println("[SYSTEM] ERROR: PD controller not found on I2C. Retrying...");
@@ -142,8 +142,10 @@ void loop() {
     }
 
     // Voltage is good — run current control every 100 ms
-    if (isDue(lastCurrentUpdate, 100)) {
+    if (isDue(lastCurrentUpdate, 500)) {
         // powerMonitor.update();
+
+// TODO: decouple up and down. this loop should always run to react to voltage down quickly. but up only once very 0.x seconds
 
         const float pdPowerLimit = pdManager.getWattage();
         // const float thermalLimit = thermalManager.getCurrentLimit();
@@ -151,7 +153,8 @@ void loop() {
         // const float powerLimit  = min(pdPowerLimit, min(thermalLimit, inputLimit));
         const float powerLimit   = pdPowerLimit;
 
-        currentControl.update(powerLimit);
+        // currentControl.update(powerLimit);
+        currentControl.update(30.0f);
 
         // Serial.printf("[CHARGER] limit=%.2fA  (pd=%.2f  therm=%.2f  input=%.2f)\n",
         //               limit, pdLimit, thermalLimit, inputLimit);

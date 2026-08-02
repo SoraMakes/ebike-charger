@@ -3,7 +3,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 
-/// Controls the open-loop charge-current setpoint through the MCP4018.
+/// Controls the regulator enable state and open-loop charge-current setpoint.
 class CurrentControl {
 public:
     /// Initializes the controller on the specified I2C bus at a safe output level.
@@ -15,13 +15,18 @@ public:
     /// @param limitWatts Maximum permitted output power in watts.
     void update(float limitWatts);
 
-    /// Immediately sets the charge-current output to its safe minimum.
+    /// Disables the regulator and sets the digipot to step 0.
     void safe();
+
+    /// Tests the regulator from the safe level through the requested digipot level.
+    /// @param maxLevel Highest digipot level to test.
+    void test(uint8_t maxLevel);
 
 private:
     TwoWire *_wire         = nullptr;
-    uint8_t  _step         = 0;
+    /// Level -1 disables the regulator; level 0 enables it at digipot step 0.
+    int16_t  _powerLevel   = -1;
 
     void    writeDigipot(uint8_t step) const;
-    static uint8_t ampsToStep(float amps);
+    static int16_t ampsToStep(float amps);
 };

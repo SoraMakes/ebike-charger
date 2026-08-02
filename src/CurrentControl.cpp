@@ -1,44 +1,87 @@
 #include "CurrentControl.h"
 
+#include <math.h>
+
 static constexpr uint8_t kMCP4018Address = 0x2F; // hardware-fixed
+static constexpr uint8_t kRegulatorEnablePin = D5;
 
 static constexpr uint8_t kMaxStep = 127;
 
-// Measured between the wiper and one end: 125 ohms at step 0,
-// approximately 35.8 ohms per step, and 4.67 kohms at step 127.
-static constexpr float kMinResistanceOhms      = 125.0f;
-static constexpr float kMaxResistanceOhms      = 4670.0f;
-static constexpr float kRegulatorMaxOutputAmps = 15.0f;
-static constexpr float kMaxAllowedOutputAmps   = 3.0f;  // Software safety limit
-static constexpr float kAssumedOutputVoltageV  = 42.0f;  // TODO: get actual voltage, 42V is the max charging voltage
-static constexpr float kResistanceRangeOhms    = kMaxResistanceOhms - kMinResistanceOhms;
-static constexpr float kResistancePerStep      = kResistanceRangeOhms / kMaxStep;
+// Measured output-current calibration: 0.13 A at step 0, +0.0715 A per step.
+static constexpr float kCurrentAtStepZeroA   = 0.13f;  // digipot: 125 Ohm
+static constexpr float kCurrentPerStepA      = 0.0715f;  // digipot: 35,8 Ohm per step
+static constexpr float kMaxAllowedOutputAmps = 3.0f;  // Software safety limit
+static constexpr float kAssumedOutputVoltageV = 42.0f; // TODO: get actual voltage
 
 void CurrentControl::begin(TwoWire &wire) {
     _wire = &wire;
+    pinMode(kRegulatorEnablePin, OUTPUT);
+    digitalWrite(kRegulatorEnablePin, LOW);
     safe();
 }
 
+void CurrentControl::test(uint8_t maxLevel) {
+    const uint8_t testMaxLevel = min(maxLevel, kMaxStep);
+
+    safe();
+    Serial.println("[CURRENT TEST] level -1, digipot step 0");
+    Serial.println("[CURRENT TEST] starting next level in 20 seconds");
+    delay(20000);
+
+    for (uint8_t level = 0; level <= testMaxLevel; ++level) {
+        _powerLevel = level;
+        writeDigipot(level);
+        digitalWrite(kRegulatorEnablePin, HIGH);
+        Serial.printf("[CURRENT TEST] level %u, digipot step %u\n",
+                      level, level);
+
+        if (level < testMaxLevel) {
+            delay(10000);
+        }
+    }
+}
+
 void CurrentControl::update(float limitWatts) {
+    const int16_t previousLevel = _powerLevel;
+
     if (limitWatts <= 0.0f) {
         safe();
+        if (_powerLevel != previousLevel) {
+            Serial.println("[CURRENT CONTROL] level -1, digipot step 0");
+        }
         return;
     }
 
     const float targetAmps = limitWatts / kAssumedOutputVoltageV;
-    const uint8_t targetStep = ampsToStep(min(targetAmps, kMaxAllowedOutputAmps));
+    const int16_t targetLevel = ampsToStep(min(targetAmps, kMaxAllowedOutputAmps));
 
-    if (_step > targetStep) {
-        _step = targetStep;
-    } else if (_step < targetStep) {
-        ++_step;
+    if (targetLevel < 0) {
+        safe();
+        if (_powerLevel != previousLevel) {
+            Serial.println("[CURRENT CONTROL] level -1, digipot step 0");
+        }
+        return;
     }
 
-    writeDigipot(_step);
+    if (_powerLevel > targetLevel) {
+        _powerLevel = targetLevel;
+    } else if (_powerLevel < targetLevel) {
+        ++_powerLevel;
+    }
+
+    const uint8_t step = static_cast<uint8_t>(_powerLevel);
+    writeDigipot(step);
+    digitalWrite(kRegulatorEnablePin, HIGH);
+
+    if (_powerLevel != previousLevel) {
+        Serial.printf("[CURRENT CONTROL] level %d, digipot step %u\n",
+                      _powerLevel, step);
+    }
 }
 
 void CurrentControl::safe() {
-    _step = 0;
+    _powerLevel = -1;
+    digitalWrite(kRegulatorEnablePin, LOW);
     writeDigipot(0);
 }
 
@@ -48,9 +91,15 @@ void CurrentControl::writeDigipot(uint8_t step) const {
     _wire->endTransmission();
 }
 
-uint8_t CurrentControl::ampsToStep(float amps) {
-    const float clampedAmps = constrain(amps, 0.0f, kRegulatorMaxOutputAmps);
-    const float targetResistance = kMinResistanceOhms + clampedAmps / kRegulatorMaxOutputAmps * kResistanceRangeOhms;
-    const int step = (int)((targetResistance - kMinResistanceOhms) / kResistancePerStep);
-    return (uint8_t)constrain(step, 0, (int)kMaxStep);
+int16_t CurrentControl::ampsToStep(float amps) {
+    const float clampedAmps = constrain(amps, 0.0f, kMaxAllowedOutputAmps);
+
+    if (clampedAmps < kCurrentAtStepZeroA) {
+        return -1;
+    }
+
+    const float step = (clampedAmps - kCurrentAtStepZeroA) / kCurrentPerStepA;
+    return static_cast<int16_t>(constrain(
+        static_cast<int>(floorf(step)), 0, static_cast<int>(kMaxStep)
+    ));
 }
