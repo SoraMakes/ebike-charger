@@ -3,15 +3,19 @@
 #include <math.h>
 
 static constexpr uint8_t kMCP4018Address = 0x2F; // hardware-fixed
-static constexpr uint8_t kRegulatorEnablePin = D5;
+static constexpr uint8_t kRegulatorEnablePin = 13;  // TTGO T-Display GPIO13 (was D5 on D1 mini; GPIO14 not available on T-Display)
 
 static constexpr uint8_t kMaxStep = 127;
 static constexpr uint32_t kIncreaseIntervalMs = 250;
 static constexpr uint32_t kVoltageLogIntervalMs = 1000;
 
-// Measured output-current calibration: 0.13 A at step 0, +0.0715 A per step.
-static constexpr float kCurrentAtStepZeroA   = 0.13f;  // digipot: 125 Ohm
-static constexpr float kCurrentPerStepA      = 0.0715f;  // digipot: 35,8 Ohm per step
+// Measured output-current calibration (actual current vs digipot step).
+// Recalibrated on the final ESP32 assembly from three measured points:
+//   set 0.99 A -> 0.800 A, 2.20 A -> 1.775 A, 0.63 A -> 0.522 A
+// Least-squares fit: actual = 0.80004 * configured + 0.01362, which maps to
+//   actual = 0.1176 A at step 0, +0.0572 A per step.
+static constexpr float kCurrentAtStepZeroA   = 0.14f;  // digipot: 125 Ohm
+static constexpr float kCurrentPerStepA      = 0.0572f;  // digipot: 35,8 Ohm per step
 static constexpr float kMaxAllowedOutputAmps = 3.0f;  // Software safety limit
 
 void CurrentControl::begin(TwoWire &wire, VoltageMonitor &voltageMonitor) {
@@ -105,6 +109,13 @@ void CurrentControl::safe() {
     _powerLevel = -1;
     digitalWrite(kRegulatorEnablePin, LOW);
     writeDigipot(0);
+}
+
+float CurrentControl::getCurrentLimitA() const {
+    if (_powerLevel < 0) {
+        return 0.0f;
+    }
+    return kCurrentAtStepZeroA + static_cast<float>(_powerLevel) * kCurrentPerStepA;
 }
 
 void CurrentControl::writeDigipot(uint8_t step) {

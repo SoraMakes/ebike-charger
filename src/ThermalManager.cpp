@@ -1,20 +1,29 @@
 #include "ThermalManager.h"
 
-static constexpr float kFanMinimumTemperatureC = 30.0f;
-static constexpr float kFanFullTemperatureC = 40.0f;
-static constexpr float kDeratingTemperatureC = kFanFullTemperatureC;
+static constexpr float kFanMinimumTemperatureC = 32.0f;
+static constexpr float kFanFullTemperatureC = 38.0f;
+static constexpr float kDeratingTemperatureC = 40.0f;
 static constexpr float kShutdownTemperatureC = 50.0f;
 static constexpr float kMaximumThermalPowerW = 100.0f;
 static constexpr uint16_t kPwmRange = 1023;
 static constexpr uint32_t kFanPwmFrequencyHz = 16000;
-static constexpr uint16_t kFanMinimumDuty = kPwmRange / 2;
+static constexpr uint16_t kFanMinimumDuty = 563;  // approximately 55% of 1023
 static constexpr uint16_t kFanFullDuty = kPwmRange;
+
+// ESP32 LEDC channel used for the fan PWM.
+static constexpr uint8_t kFanLedcChannel = 0;
 
 bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin) {
     _fanPin = fanPin;
-    analogWriteRange(kPwmRange);
-    analogWriteFreq(kFanPwmFrequencyHz);
+    // ESP32: configure the LEDC PWM peripheral for the fan.
+    const uint32_t configuredFrequency = ledcSetup(kFanLedcChannel, kFanPwmFrequencyHz, 10);
+    if (configuredFrequency == 0) {
+        Serial.println("[THERM] Fan PWM setup failed");
+    }
     pinMode(_fanPin, OUTPUT);
+    // Attach LEDC after pinMode: on ESP32 pinMode configures the GPIO matrix
+    // and must not overwrite the peripheral output routing.
+    ledcAttachPin(_fanPin, kFanLedcChannel);
 
     applyFanPwm(kFanFullDuty);
     _sensorFault = !_sensor.begin(&wire, 0, 0x38);
@@ -87,7 +96,8 @@ bool ThermalManager::isShutdownLatched() const {
 }
 
 void ThermalManager::applyFanPwm(uint16_t duty) const {
-    analogWrite(_fanPin, duty);
+    // ESP32: write via the LEDC peripheral.
+    ledcWrite(kFanLedcChannel, duty);
 }
 
 void ThermalManager::enterShutdown(const char *reason) {

@@ -5,18 +5,22 @@
 // #include "PowerMonitor.h"
 #include "CurrentControl.h"
 #include "VoltageMonitor.h"
+#include "DisplayManager.h"
 
-static constexpr int      I2C_SDA_PIN              = 4;     // D2
-static constexpr int      I2C_SCL_PIN              = 5;     // D1
+// TTGO T-Display I2C pins (SDA=21, SCL=22).
+static constexpr int      I2C_SDA_PIN              = 21;
+static constexpr int      I2C_SCL_PIN              = 22;
 static constexpr float    kMinChargeVoltage        = 8.5f;  // Minimum voltage required to enable the charger (eg minimum voltage of the boost converter)
 
-static constexpr uint8_t kFanPin = D6;  // GPIO12; D5 is used by CurrentControl
+// TTGO T-Display: fan on GPIO12 (free).
+static constexpr uint8_t kFanPin = 12;
 
 static PDManager      pdManager;
 static ThermalManager thermalManager;
 // static PowerMonitor   powerMonitor;
 static CurrentControl currentControl;
 static VoltageMonitor voltageMonitor;
+static DisplayManager displayManager;
 
 static constexpr float kVoltageRegulatorEfficiency = 0.88f;  // calculated efficiency at 20V/5A: 90%
 static constexpr float kElectronicsPowerW          = 2.0f;  // esp, sensors, fan  (measured: 1W over USB, fan 100%, no INA, no output current sensor)
@@ -46,7 +50,9 @@ void setup() {
 
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
-    voltageMonitor.begin(A0);
+    displayManager.begin();
+
+    voltageMonitor.begin(33);  // TTGO T-Display: voltage-divider ADC input
     currentControl.begin(Wire, voltageMonitor);
     if (!thermalManager.begin(Wire, kFanPin)) {
         Serial.println("[THERM] AHT10 unavailable; charging disabled.");
@@ -69,6 +75,12 @@ void loop() {
     static uint32_t lastCurrentUpdate = 0;
     static uint32_t lastPowerLimitLog = 0;
     static uint32_t lastNoSourceLog   = 0;
+    static uint32_t lastDisplayUpdate = 0;
+
+    // Display always runs.
+    if (isDue(lastDisplayUpdate, 500)) {
+        displayManager.update(pdManager, thermalManager, currentControl, voltageMonitor);
+    }
 
     // Thermal & fan always run, regardless of PD state.
     if (isDue(lastThermalUpdate, 1000)) {

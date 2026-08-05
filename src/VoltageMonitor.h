@@ -18,7 +18,7 @@ public:
     int getRawReading() const;
 
 private:
-    uint8_t _adcPin = A0;
+    uint8_t _adcPin = 33;  // TTGO T-Display voltage-divider ADC input
     int     _rawReading = 0;
     float   _voltageV   = 0.0f;
 };

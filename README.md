@@ -1,12 +1,13 @@
 # USB-PD Charger
 
-Firmware for an ESP8266 D1 mini based USB-PD charger. It negotiates the highest
-available USB-PD voltage, controls the regulator's output current through an
-MCP4018 digipot, and limits power according to temperature.
+Firmware for a TTGO T-Display (ESP32) based USB-PD charger. It negotiates the
+highest available USB-PD voltage, controls the regulator's output current
+through an MCP4018 digipot, limits power according to temperature, and shows
+metrics on the onboard ST7789 display.
 
 ## Build and upload
 
-Install [PlatformIO](https://platformio.org/), connect the D1 mini, then run:
+Install [PlatformIO](https://platformio.org/), connect the board, then run:
 
 ```text
 pio run
@@ -16,6 +17,22 @@ pio device monitor
 
 The serial monitor uses **115200 baud**. The required libraries are declared in
 `platformio.ini` and are installed automatically by PlatformIO.
+
+## Pinout (TTGO T-Display)
+
+| Function | GPIO | Notes |
+|---|---|---|
+| I2C SDA | 21 | Shared bus: HUSB238, AHT10, MCP4018, INA219 |
+| I2C SCL | 22 | Shared bus |
+| Voltage divider (ADC) | 33 | ADC1 input; measures charger output voltage |
+| Regulator enable | 13 | Enables the boost converter (was D5 on D1 mini; GPIO14 not available on T-Display) |
+| Fan PWM | 12 | LEDC PWM output |
+| TFT MOSI | 19 | Display SPI data |
+| TFT SCLK | 18 | Display SPI clock |
+| TFT CS | 5 | Display chip select |
+| TFT DC | 16 | Display data/command |
+| TFT RST | 23 | Display reset |
+| TFT BL | 4 | Display backlight |
 
 ## TODOs:
 

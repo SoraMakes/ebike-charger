@@ -19,6 +19,10 @@ public:
     /// Disables the regulator and sets the digipot to step 0.
     void safe();
 
+    /// Returns the currently configured output current limit in amps
+    /// (0 when the regulator is disabled).
+    float getCurrentLimitA() const;
+
     /// Tests the regulator from the safe level through the requested digipot level.
     /// @param maxLevel Highest digipot level to test.
     void test(uint8_t maxLevel);
