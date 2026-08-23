@@ -4,12 +4,14 @@
 #include <Wire.h>
 #include <Adafruit_AHTX0.h>
 
+class CurrentControl;
+
 /// Measures ambient temperature and manages thermal fan and charge limits.
 class ThermalManager {
 public:
     /// Initializes the AHT10 and fan output.
     /// @return true when the temperature sensor was detected.
-    bool begin(TwoWire &wire, uint8_t fanPin);
+    bool begin(TwoWire &wire, uint8_t fanPin, CurrentControl &currentControl);
 
     /// Updates the temperature state and fan output.
     /// Call periodically, approximately once per second.
@@ -37,6 +39,7 @@ private:
     float _outputPowerLimitW = 0.0f;
     bool _sensorFault = true;
     bool _shutdownLatched = false;
+    CurrentControl *_currentControl = nullptr;
 
     void applyFanPwm(uint16_t duty) const;
     void enterShutdown(const char *reason);

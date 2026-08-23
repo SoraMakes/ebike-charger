@@ -1,4 +1,5 @@
 #include "ThermalManager.h"
+#include "CurrentControl.h"
 
 static constexpr float kFanMinimumTemperatureC = 32.0f;
 static constexpr float kFanFullTemperatureC = 38.0f;
@@ -13,8 +14,9 @@ static constexpr uint16_t kFanFullDuty = kPwmRange;
 // ESP32 LEDC channel used for the fan PWM.
 static constexpr uint8_t kFanLedcChannel = 0;
 
-bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin) {
+bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin, CurrentControl &currentControl) {
     _fanPin = fanPin;
+    _currentControl = &currentControl;
     // ESP32: configure the LEDC PWM peripheral for the fan.
     const uint32_t configuredFrequency = ledcSetup(kFanLedcChannel, kFanPwmFrequencyHz, 10);
     if (configuredFrequency == 0) {
@@ -28,7 +30,7 @@ bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin) {
     applyFanPwm(kFanFullDuty);
     _sensorFault = !_sensor.begin(&wire, 0, 0x38);
     if (_sensorFault) {
-        enterShutdown("AHT10 not detected");
+        enterShutdown("Temp failed");
         return false;
     }
 
@@ -50,7 +52,7 @@ void ThermalManager::update() {
     if (!isfinite(temperature.temperature) ||
         temperature.temperature < -40.0f || temperature.temperature > 85.0f) {
         _sensorFault = true;
-        enterShutdown("invalid AHT10 reading");
+        enterShutdown("Temp invalid");
         return;
     }
 
@@ -67,7 +69,7 @@ void ThermalManager::update() {
     applyFanPwm(fanDuty);
 
     if (_temperatureC >= kShutdownTemperatureC) {
-        enterShutdown("AHT10 overtemperature");
+        enterShutdown("overtemperature");
         return;
     }
 
@@ -107,4 +109,5 @@ void ThermalManager::enterShutdown(const char *reason) {
     _shutdownLatched = true;
     _outputPowerLimitW = 0.0f;
     applyFanPwm(kFanFullDuty);
+    _currentControl->requestShutdown(reason);
 }

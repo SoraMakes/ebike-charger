@@ -7,6 +7,10 @@ static constexpr uint8_t kRegulatorEnablePin = 13;  // TTGO T-Display GPIO13 (wa
 
 static constexpr uint8_t kMaxStep = 127;
 static constexpr uint32_t kIncreaseIntervalMs = 250;
+// These final steps will be increases one by one and not accelerated
+static constexpr int16_t kFinalRampSteps = 4;
+// Four increase intervals per second; divisor 8 gives 50% of target per second.
+static constexpr int16_t kRampUpDivisor = 8;
 static constexpr uint32_t kVoltageLogIntervalMs = 1000;
 
 // Measured output-current calibration (actual current vs digipot step).
@@ -29,6 +33,10 @@ void CurrentControl::begin(TwoWire &wire, VoltageMonitor &voltageMonitor) {
 
 // TODO: remove again!
 void CurrentControl::test(uint8_t maxLevel) {
+    if (_shutdownLatched) {
+        safe();
+        return;
+    }
     const uint8_t testMaxLevel = min(maxLevel, kMaxStep);
 
     safe();
@@ -49,7 +57,12 @@ void CurrentControl::test(uint8_t maxLevel) {
     }
 }
 
+// TODO: remove
 void CurrentControl::test_set_fixed(uint8_t level) {
+    if (_shutdownLatched) {
+        safe();
+        return;
+    }
     const uint8_t testLevel = min(level, kMaxStep);
 
     _powerLevel = testLevel;
@@ -61,11 +74,14 @@ void CurrentControl::test_set_fixed(uint8_t level) {
 }
 
 void CurrentControl::update(float limitWatts) {
+    if (_shutdownLatched) {
+        safe();
+        return;
+    }
+
     const int16_t previousLevel = _powerLevel;
     const uint32_t now = millis();
-    _voltageMonitor->update();
     const float outputVoltageV = _voltageMonitor->getVoltage();
-
 
     if (limitWatts <= 0.0f || !isfinite(outputVoltageV) || outputVoltageV <= 0.0f) {
         safe();
@@ -87,14 +103,37 @@ void CurrentControl::update(float limitWatts) {
         return;
     }
 
+    const int16_t acceleratedTarget = max(
+        static_cast<int16_t>(0),
+        static_cast<int16_t>(targetLevel - kFinalRampSteps)
+    );
+
     if (_powerLevel > targetLevel) {
         _powerLevel = targetLevel;
-    } else if (_powerLevel < targetLevel && now - _lastIncreaseAt >= kIncreaseIntervalMs) {
-        ++_powerLevel;
-        _lastIncreaseAt = now;
+    } else if (_powerLevel < targetLevel) {
+        if (now - _lastIncreaseAt >= kIncreaseIntervalMs) {
+            _lastIncreaseAt = now;
+
+            if (_powerLevel < acceleratedTarget) {
+                const int16_t stepsPerIncrease = max(
+                    static_cast<int16_t>(1),
+                    static_cast<int16_t>(targetLevel / kRampUpDivisor)
+                );
+                _powerLevel = min(
+                    static_cast<int16_t>(_powerLevel + stepsPerIncrease),
+                    acceleratedTarget
+                );
+            } else {
+                // Final steps: one step per timer interval.
+                ++_powerLevel;
+            }
+        }
     }
 
-    const uint8_t step = static_cast<uint8_t>(_powerLevel);
+    // -1 means disabled internally; step 0 is the safe digipot value.
+    const uint8_t step = _powerLevel < 0
+        ? 0
+        : static_cast<uint8_t>(_powerLevel);
     writeDigipot(step);
     digitalWrite(kRegulatorEnablePin, HIGH);
 
@@ -116,6 +155,26 @@ float CurrentControl::getCurrentLimitA() const {
         return 0.0f;
     }
     return kCurrentAtStepZeroA + static_cast<float>(_powerLevel) * kCurrentPerStepA;
+}
+
+void CurrentControl::requestShutdown(const char *reason) {
+    if (_shutdownLatched) {
+        return;
+    }
+
+    _shutdownLatched = true;
+    strncpy(_shutdownReason, reason ? reason : "unknown", sizeof(_shutdownReason) - 1);
+    _shutdownReason[sizeof(_shutdownReason) - 1] = '\0';
+    Serial.printf("[CURRENT CONTROL] Shutdown: %s\n", _shutdownReason);
+    safe();
+}
+
+bool CurrentControl::isShutdownLatched() const {
+    return _shutdownLatched;
+}
+
+const char *CurrentControl::getShutdownReason() const {
+    return _shutdownReason;
 }
 
 void CurrentControl::writeDigipot(uint8_t step) {

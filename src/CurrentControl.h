@@ -10,18 +10,29 @@ public:
     /// Initializes the controller and voltage monitor at a safe output level.
     void begin(TwoWire &wire, VoltageMonitor &voltageMonitor);
 
-    /// Applies an upper bound to the output power at the measured output voltage.
+    /// Applies an upper bound to the output power at the latest measured
+    /// output voltage.
     /// The setpoint decreases immediately when it exceeds the bound and increases
-    /// gradually when additional power is available.
+    /// over time when additional power is available.
     /// @param limitWatts Maximum permitted output power in watts.
     void update(float limitWatts);
 
     /// Disables the regulator and sets the digipot to step 0.
     void safe();
 
+    /// Permanently disables the regulator until reset and stores a short reason.
+    void requestShutdown(const char *reason);
+
     /// Returns the currently configured output current limit in amps
     /// (0 when the regulator is disabled).
     float getCurrentLimitA() const;
+
+    /// Returns true after a permanent shutdown request. Once latched, the
+    /// regulator can never be re-enabled until reset.
+    bool isShutdownLatched() const;
+
+    /// Returns the short reason for the permanent shutdown.
+    const char *getShutdownReason() const;
 
     /// Tests the regulator from the safe level through the requested digipot level.
     /// @param maxLevel Highest digipot level to test.
@@ -39,6 +50,8 @@ private:
     int16_t  _lastDigipotStep = -1;
     uint32_t _lastIncreaseAt = 0;
     uint32_t _lastVoltageLogAt = 0;
+    bool     _shutdownLatched = false;
+    char     _shutdownReason[17] = "";
 
     void    writeDigipot(uint8_t step);
     static int16_t ampsToStep(float amps);

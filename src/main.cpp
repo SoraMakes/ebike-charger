@@ -25,14 +25,25 @@ static DisplayManager displayManager;
 static constexpr float kVoltageRegulatorEfficiency = 0.88f;  // calculated efficiency at 20V/5A: 90%
 static constexpr float kElectronicsPowerW          = 2.0f;  // esp, sensors, fan  (measured: 1W over USB, fan 100%, no INA, no output current sensor)
 
-static bool isDue(uint32_t &lastRun, uint32_t intervalMs) {
-    const uint32_t now = millis();
-    if (now - lastRun >= intervalMs) {
-        lastRun = now;
-        return true;
+// A periodic task owns its interval, timestamp, and the action to run once due.
+// Unsigned subtraction remains safe across the millis() rollover.
+class PeriodicTask {
+public:
+    PeriodicTask(uint32_t intervalMs, void (*action)()) : _intervalMs(intervalMs), _action(action) {}
+
+    void tick() {
+        const uint32_t now = millis();
+        if (now - _lastRun >= _intervalMs) {
+            _lastRun = now;
+            _action();
+        }
     }
-    return false;
-}
+
+private:
+    const uint32_t _intervalMs;
+    void (*const _action)();
+    uint32_t _lastRun = 0;
+};
 
 static float calculateOutputPowerLimit(float inputPowerLimitW) {
     if (inputPowerLimitW <= kElectronicsPowerW) {
@@ -43,6 +54,73 @@ static float calculateOutputPowerLimit(float inputPowerLimitW) {
     return regulatorInputPowerW * kVoltageRegulatorEfficiency;
 }
 
+// --- Task actions -----------------------------------------------------------
+
+static void updateDisplay() {
+    displayManager.update(pdManager, thermalManager, currentControl, voltageMonitor);
+}
+
+static void updateThermal() {
+    thermalManager.update();
+}
+
+static void logThermalStatus() {
+    if (thermalManager.hasSensorFault()) {
+        Serial.println("[THERM] temperature unavailable; charging disabled");
+    } else {
+        Serial.printf("[THERM] temperature=%.1fC thermal-limit=%.1fW%s\n",
+                      thermalManager.getTemperatureC(),
+                      thermalManager.getOutputPowerLimitW(),
+                      thermalManager.isShutdownLatched() ? " shutdown-latched" : "");
+    }
+}
+
+static void updatePd() {
+    pdManager.update();
+
+    if (pdManager.justDetached()) {
+        currentControl.safe();
+        Serial.println("[PD] Power source disconnected.");
+    }
+
+    if (pdManager.voltageJumped()) {
+        currentControl.safe();
+    }
+
+    if (pdManager.justAttached()) {
+        currentControl.safe();
+        Serial.println("[PD] Voltage settled; waiting 100 ms for output to stabilize.");
+        delay(100);
+    }
+}
+
+static void updateVoltage() {
+    voltageMonitor.update();
+}
+
+static void logNoSource() {
+    Serial.println("[PD] No power source attached.");
+}
+
+static void updateCurrentControl() {
+    const float pdPowerLimit = pdManager.getWattage();
+    const float pdOutputPowerLimit = calculateOutputPowerLimit(pdPowerLimit);
+    const float thermalOutputPowerLimit = thermalManager.getOutputPowerLimitW();
+    const float outputPowerLimit = min(pdOutputPowerLimit, thermalOutputPowerLimit);
+
+    currentControl.update(outputPowerLimit);
+}
+
+// --- Task table: interval and action defined together ------------------------
+
+static PeriodicTask displayTask(500, updateDisplay);
+static PeriodicTask thermalUpdateTask(1000, updateThermal);
+static PeriodicTask thermalLogTask(5000, logThermalStatus);
+static PeriodicTask pdUpdateTask(75, updatePd);
+static PeriodicTask voltageUpdateTask(100, updateVoltage);
+static PeriodicTask currentUpdateTask(50, updateCurrentControl);
+static PeriodicTask noSourceLogTask(1000, logNoSource);
+
 void setup() {
     Serial.begin(115200);
 
@@ -52,9 +130,9 @@ void setup() {
 
     displayManager.begin();
 
-    voltageMonitor.begin(33);  // TTGO T-Display: voltage-divider ADC input
+    voltageMonitor.begin(33, currentControl);  // TTGO T-Display: voltage-divider ADC input
     currentControl.begin(Wire, voltageMonitor);
-    if (!thermalManager.begin(Wire, kFanPin)) {
+    if (!thermalManager.begin(Wire, kFanPin, currentControl)) {
         Serial.println("[THERM] AHT10 unavailable; charging disabled.");
     }
 
@@ -69,65 +147,20 @@ void setup() {
 }
 
 void loop() {
-    static uint32_t lastThermalUpdate = 0;
-    static uint32_t lastThermalLog    = 0;
-    static uint32_t lastPdUpdate      = 0;
-    static uint32_t lastCurrentUpdate = 0;
-    static uint32_t lastPowerLimitLog = 0;
-    static uint32_t lastNoSourceLog   = 0;
-    static uint32_t lastDisplayUpdate = 0;
-
     // Display always runs.
-    if (isDue(lastDisplayUpdate, 500)) {
-        displayManager.update(pdManager, thermalManager, currentControl, voltageMonitor);
-    }
+    displayTask.tick();
 
     // Thermal & fan always run, regardless of PD state.
-    if (isDue(lastThermalUpdate, 1000)) {
-        thermalManager.update();
-    }
+    thermalUpdateTask.tick();
+    thermalLogTask.tick();
 
-    if (isDue(lastThermalLog, 5000)) {
-        if (thermalManager.hasSensorFault()) {
-            Serial.println("[THERM] temperature unavailable; charging disabled");
-        } else {
-            Serial.printf("[THERM] temperature=%.1fC thermal-limit=%.1fW%s\n",
-                          thermalManager.getTemperatureC(),
-                          thermalManager.getOutputPowerLimitW(),
-                          thermalManager.isShutdownLatched() ? " shutdown-latched" : "");
-        }
-    }
-
-    // For safety reasons. The power limit from thermalManager should be 0 too, causing the same effect
-    // but this way it ensures power down eg even if a software bug would otherwise the limit not to be applied
-    if (thermalManager.hasSensorFault() || thermalManager.isShutdownLatched()) {
-        currentControl.safe();
-        return;
-    }
-
-    if (isDue(lastPdUpdate, 250)) {
-        pdManager.update();
-
-        if (pdManager.justDetached()) {
-            currentControl.safe();
-            Serial.println("[PD] Power source disconnected.");
-        }
-
-        if (pdManager.voltageJumped()) {
-            currentControl.safe();
-        }
-
-        if (pdManager.justAttached()) {
-            currentControl.safe();
-            Serial.println("[PD] Voltage settled; waiting 100 ms for output to stabilize.");
-            delay(100);
-        }
-    }
+    pdUpdateTask.tick();
+    voltageUpdateTask.tick();
 
     if (!pdManager.isReady()) {
         currentControl.safe();
-        if (!pdManager.isAttached() && isDue(lastNoSourceLog, 1000)) {
-            Serial.println("[PD] No power source attached.");
+        if (!pdManager.isAttached()) {
+            noSourceLogTask.tick();
         }
         return;
     }
@@ -139,28 +172,6 @@ void loop() {
         return;
     }
 
-    if (isDue(lastCurrentUpdate, 100)) {
-        // powerMonitor.update();
-
-        const float pdPowerLimit = pdManager.getWattage();
-        // const float thermalLimit = thermalManager.getCurrentLimit();
-        // const float inputLimit   = powerMonitor.getCurrentLimit();
-        // const float outputPowerLimit = min(pdOutputPowerLimit, min(thermalLimit, inputLimit));
-        const float pdOutputPowerLimit = calculateOutputPowerLimit(pdPowerLimit);
-        const float thermalOutputPowerLimit = thermalManager.getOutputPowerLimitW();
-        const float outputPowerLimit = min(pdOutputPowerLimit, thermalOutputPowerLimit);
-
-        currentControl.update(outputPowerLimit);
-
-        // Log the current and power limit
-        if (isDue(lastPowerLimitLog, 5000)) {
-            const float outputVoltageV = voltageMonitor.getVoltage();
-            const float outputCurrentLimitA = outputVoltageV > 0.0f
-                ? outputPowerLimit / outputVoltageV
-                : 0.0f;
-            Serial.printf("[CHARGER LIMIT] current=%.2fA power=%.2fW (PD input=%.2fW thermal=%.1fW temp=%.1fC)\n",
-                          outputCurrentLimitA, outputPowerLimit, pdPowerLimit,
-                          thermalOutputPowerLimit, thermalManager.getTemperatureC());
-        }
-    }
+    // powerMonitor.update();
+    currentUpdateTask.tick();
 }
