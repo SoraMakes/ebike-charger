@@ -4,16 +4,29 @@
 #include <Wire.h>
 #include <Adafruit_BMP280.h>
 
-class PDManager;
+class CurrentControl;
 
-/// Temperature sensing plus fan and thermal power limit.
+/// Measures ambient temperature and manages thermal fan and charge limits.
 class ThermalManager {
 public:
-    bool begin(TwoWire &wire, uint8_t fanPin, PDManager &pdManager);
+    /// Initializes the BMP280 and fan output.
+    /// @return true when the temperature sensor was detected.
+    bool begin(TwoWire &wire, uint8_t fanPin, CurrentControl &currentControl);
+
+    /// Updates the temperature state and fan output.
+    /// Call periodically, approximately once per second.
     void update();
+
+    /// Returns the most recent temperature in degrees Celsius.
     float getTemperatureC() const;
+
+    /// Returns the thermally permitted output power in watts, from 0 to 100.
     float getOutputPowerLimitW() const;
+
+    /// Returns true when the sensor is unavailable or a reading failed.
     bool hasSensorFault() const;
+
+    /// Returns true after an overtemperature or sensor-fault shutdown.
     bool isShutdownLatched() const;
 
 private:
@@ -26,7 +39,7 @@ private:
     float _outputPowerLimitW = 0.0f;
     bool _sensorFault = true;
     bool _shutdownLatched = false;
-    PDManager *_pdManager = nullptr;
+    CurrentControl *_currentControl = nullptr;
 
     void applyFanPwm(uint16_t duty) const;
     void enterShutdown(const char *reason);

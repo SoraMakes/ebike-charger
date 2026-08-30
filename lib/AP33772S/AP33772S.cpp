@@ -165,6 +165,30 @@ void AP33772S::displayProfiles()
  }
 
 /**
+ * @brief Host-initiated PD Hard Reset via PD_CMDMSG.HRST (bit 0).
+ *        Instructs the sink controller to drop VBUS and re-attach, forcing a
+ *        fresh PD negotiation. Used to recover from a stuck legacy (non-PD)
+ *        latching state. This is a WO register - only ever write it.
+ */
+bool AP33772S::hardReset()
+{
+    writeBuf[0] = 0x01; // bit0 = HRST
+    return i2c_write(AP33772S_ADDRESS, CMD_PD_CMDMSG, 1);
+}
+
+/**
+ * @brief Read a raw 1-byte register. Returns false on I2C error (via readBuf).
+ */
+bool AP33772S::readRawByte(uint8_t cmd, uint8_t &outVar)
+{
+    if (!i2c_read(AP33772S_ADDRESS, cmd, 1)) {
+        return false;
+    }
+    outVar = readBuf[0];
+    return true;
+}
+
+/**
  * @brief Decode PDO information from SRC_SPRandEPR_PDO_Fields
  * @param pdoIndex feed from loop
  */
