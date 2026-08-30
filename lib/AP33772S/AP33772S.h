@@ -4,6 +4,8 @@ AP33772S.h - Header file for the AP33772S USB-C PD 3.1 Sink Controller Arduino L
 Version: 1.1.0
 (c) 2024 CentyLab
 www.centylab.com
+Forked for charger project: added raw status/opmode/msgrlt registers, PDO table getters,
+sendPdoRequest, dynamic I2C port support, and presence-checked begin().
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the version 3 GNU General Public License as
@@ -174,8 +176,11 @@ class AP33772S
 {
 public:
   AP33772S(TwoWire &wire = Wire);
-  void begin();
+  bool begin();
+  bool begin(TwoWire &wire);
   void reset();
+  bool hardReset();
+  bool readRawByte(uint8_t cmd, uint8_t &outVar);
   void displayPDOInfo(int pdoIndex);
   void displayProfiles();
   void mapPPSAVSInfo();
@@ -188,10 +193,23 @@ public:
   
   // Mask/Config functions
   void setMask(AP33772_MASK flag);
+  bool setInterruptRegisterMask(uint8_t mask);
   void clearMask(AP33772_MASK flag);
   void setConfig(AP33772_CONFIG flag);
   void clearConfig(AP33772_CONFIG flag);
   byte readMask();
+
+  // Raw status & opmode
+  uint8_t readStatus();
+  uint8_t readOpMode();
+  uint8_t readMsgResult();
+
+  // PDO table access; all indices are 1-based (1..13) as in USB-PD RDOs
+  void refreshPdoTable();
+  bool requestFixedPDO(uint8_t pdoIndex);
+  bool isFixedPdoAt(int pdoIndex) const;
+  float getPdoVoltageV(int pdoIndex) const;
+  float getPdoMaxCurrentA(int pdoIndex) const;
 
   // Monitor functions
   int readTemp();
@@ -225,8 +243,8 @@ public:
   byte existAVS = 0; // AVS flag for setVoltage()
 
 private:
-  static void i2c_read(byte slvAddr, byte cmdAddr, byte len);
-  static void i2c_write(byte slvAddr, byte cmdAddr, byte len);
+  bool i2c_read(byte slvAddr, byte cmdAddr, byte len);
+  bool i2c_write(byte slvAddr, byte cmdAddr, byte len);
   TwoWire *_i2cPort = &Wire;
   static byte readBuf[READ_BUFF_LENGTH];
   static byte writeBuf[WRITE_BUFF_LENGTH];

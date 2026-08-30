@@ -2,14 +2,14 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include <Adafruit_AHTX0.h>
+#include <Adafruit_BMP280.h>
 
 class CurrentControl;
 
 /// Measures ambient temperature and manages thermal fan and charge limits.
 class ThermalManager {
 public:
-    /// Initializes the AHT10 and fan output.
+    /// Initializes the BMP280 and fan output.
     /// @return true when the temperature sensor was detected.
     bool begin(TwoWire &wire, uint8_t fanPin, CurrentControl &currentControl);
 
@@ -33,7 +33,7 @@ private:
     static constexpr uint16_t kPwmRange = 1023;
     static constexpr uint32_t kFanPwmFrequencyHz = 16000;
 
-    Adafruit_AHTX0 _sensor;
+    Adafruit_BMP280 _sensor;
     uint8_t _fanPin = 0;
     float _temperatureC = 25.0f;
     float _outputPowerLimitW = 0.0f;
