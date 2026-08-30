@@ -4,21 +4,24 @@
 #include <Wire.h>
 #include <INA238.h>
 
-/// Input voltage/current via the onboard INA238.
+/// Measures USB-PD input voltage/current via the RotoPD Pro's onboard INA238.
 class PowerMonitor {
 public:
+    /// Initializes the INA238 (I2C address 0x40, 5 mOhm shunt on RotoPD Pro).
+    /// @return true when the INA238 is available.
     bool  begin();
-    void  update();
-    float getInputVoltage() const;
-    float getInputCurrent() const;
-    bool hasAlert() const { return _alertSticky != 0; }
 
-    // Latched faults as text.
-    const char *getAlertText() const;
+    /// Refreshes the latest input voltage and current measurements.
+    void  update();
+
+    /// Returns the most recently measured input bus voltage in volts.
+    float getInputVoltage() const;
+
+    /// Returns the most recently measured input current in amps.
+    float getInputCurrent() const;
 
 private:
     INA238 _ina{0x40};
     float _busVoltage = 0.0f;
     float _current    = 0.0f;
-    uint16_t _alertSticky = 0;
 };

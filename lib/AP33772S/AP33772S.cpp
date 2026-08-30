@@ -56,10 +56,6 @@ bool AP33772S::begin()
     if (_i2cPort->endTransmission() != 0) {
         return false;
     }
-    // Insufficient delay after I2C init before the capability request has
-    // caused "no PDOs read" symptoms on other AP33772S boards. Give the chip
-    // time to settle before reading the PDO table.
-    delay(1000);
     refreshPdoTable();
     return true;
 }
@@ -118,25 +114,11 @@ bool AP33772S::requestFixedPDO(uint8_t pdoIndex)
     return i2c_write(AP33772S_ADDRESS, CMD_PD_REQMSG, 2);
 }
 
-bool AP33772S::requestPdoRaw(uint8_t pdoIndex, uint8_t currentSel)
-{
-    RDO_DATA_T rdo{};
-    rdo.REQMSG_Fields.PDO_INDEX   = pdoIndex;
-    rdo.REQMSG_Fields.CURRENT_SEL = currentSel;
-    writeBuf[0] = rdo.byte0;
-    writeBuf[1] = rdo.byte1;
-    return i2c_write(AP33772S_ADDRESS, CMD_PD_REQMSG, 2);
-}
-
 bool AP33772S::isFixedPdoAt(int pdoIndex) const
 {
     if (pdoIndex < 1 || pdoIndex > MAX_PDO_ENTRIES) return false;
     const SRC_SPRandEPR_PDO_Fields &pdo = SRC_SPRandEPRpdoArray[pdoIndex - 1];
-    // DETECT (bit 15) is the datasheet's own validity flag, and PD_REQMSG's
-    // PDO_INDEX is only valid for a detected PDO. It subsumes the old
-    // "both bytes zero" heuristic, which would accept a slot holding stale or
-    // partially-decoded data with DETECT clear.
-    if (pdo.fixed.detect == 0) return false;
+    if (pdo.byte0 == 0 && pdo.byte1 == 0) return false;
     return pdo.fixed.type == 0;
 }
 
@@ -153,12 +135,7 @@ float AP33772S::getPdoMaxCurrentA(int pdoIndex) const
     if (!isFixedPdoAt(pdoIndex)) return 0.0f;
     // Conservative lower bound of the CURRENT_MAX bucket, inverse of currentMap().
     const uint8_t code = SRC_SPRandEPRpdoArray[pdoIndex - 1].fixed.current_max;
-    // Code 0 is the bucket "0.00A ~ 1.24A (Less than)", so its conservative
-    // lower bound is 0 A, not 1 A. Returning 1 A was the one branch that was an
-    // optimistic guess rather than a lower bound, and it over-budgeted the
-    // power limit by up to 2x for any source advertising such a profile.
-    // Callers must therefore treat 0 A as "unusable" - see findBestFixedPdo().
-    if (code == 0) return 0.0f;
+    if (code == 0) return 1.0f;
     if (code >= 15) return 5.0f;
     return (1250 + (code - 1) * 250) / 1000.0f;
 }
@@ -186,30 +163,6 @@ void AP33772S::displayProfiles()
   writeBuf[0] = readBuf[0];
   i2c_write(AP33772S_ADDRESS, CMD_PD_CMDMSG, 1);
  }
-
-/**
- * @brief Host-initiated PD Hard Reset via PD_CMDMSG.HRST (bit 0).
- *        Instructs the sink controller to drop VBUS and re-attach, forcing a
- *        fresh PD negotiation. Used to recover from a stuck legacy (non-PD)
- *        latching state. This is a WO register - only ever write it.
- */
-bool AP33772S::hardReset()
-{
-    writeBuf[0] = 0x01; // bit0 = HRST
-    return i2c_write(AP33772S_ADDRESS, CMD_PD_CMDMSG, 1);
-}
-
-/**
- * @brief Read a raw 1-byte register. Returns false on I2C error (via readBuf).
- */
-bool AP33772S::readRawByte(uint8_t cmd, uint8_t &outVar)
-{
-    if (!i2c_read(AP33772S_ADDRESS, cmd, 1)) {
-        return false;
-    }
-    outVar = readBuf[0];
-    return true;
-}
 
 /**
  * @brief Decode PDO information from SRC_SPRandEPR_PDO_Fields
@@ -831,9 +784,8 @@ bool AP33772S::setOutput(uint8_t flag){
  **/
 void AP33772S::setMask(AP33772_MASK flag)
 {
-  // First read in what is currently in the location. Bail on a failed read:
-  // a zeroed buffer would silently clear every other mask bit.
-  if (!i2c_read(AP33772S_ADDRESS, CMD_MASK, 1)) return;
+  // First read in what is currently in the location
+  i2c_read(AP33772S_ADDRESS, CMD_MASK, 1);
   readBuf[0] |= flag;   // Set the bit
   writeBuf[0] = readBuf[0];
   i2c_write(AP33772S_ADDRESS, CMD_MASK, 1);
@@ -846,9 +798,8 @@ void AP33772S::setMask(AP33772_MASK flag)
  **/
 void AP33772S::clearMask(AP33772_MASK flag)
 {
-  // First read in what is currently in the location. Bail on a failed read:
-  // a zeroed buffer would silently clear every other mask bit.
-  if (!i2c_read(AP33772S_ADDRESS, CMD_MASK, 1)) return;
+  // First read in what is currently in the location
+  i2c_read(AP33772S_ADDRESS, CMD_MASK, 1);
   readBuf[0] &= ~flag;   // Set the bit
   writeBuf[0] = readBuf[0];
   i2c_write(AP33772S_ADDRESS, CMD_MASK, 1);
@@ -861,9 +812,8 @@ void AP33772S::clearMask(AP33772_MASK flag)
  **/
 void AP33772S::setConfig(AP33772_CONFIG flag)
 {
-  // First read in what is currently in the location. Bail on a failed read:
-  // writing back a zeroed buffer would clear every other protection bit.
-  if (!i2c_read(AP33772S_ADDRESS, CMD_CONFIG, 1)) return;
+  // First read in what is currently in the location
+  i2c_read(AP33772S_ADDRESS, CMD_CONFIG, 1);
   readBuf[0] |= flag;   // Set the bit
   writeBuf[0] = readBuf[0];
   i2c_write(AP33772S_ADDRESS, CMD_CONFIG, 1);
@@ -876,9 +826,8 @@ void AP33772S::setConfig(AP33772_CONFIG flag)
  **/
 void AP33772S::clearConfig(AP33772_CONFIG flag)
 {
-  // First read in what is currently in the location. Bail on a failed read:
-  // writing back a zeroed buffer would clear every other protection bit.
-  if (!i2c_read(AP33772S_ADDRESS, CMD_CONFIG, 1)) return;
+  // First read in what is currently in the location
+  i2c_read(AP33772S_ADDRESS, CMD_CONFIG, 1);
   readBuf[0] &= ~flag;   // Set the bit
   writeBuf[0] = readBuf[0];
   i2c_write(AP33772S_ADDRESS, CMD_CONFIG, 1);
@@ -913,18 +862,13 @@ bool AP33772S::i2c_read(byte slvAddr, byte cmdAddr, byte len)
     }
 
     _i2cPort->requestFrom(slvAddr, len); // request len bytes from peripheral device
-    if (len > _i2cPort->available())
-    {
-        // Short read. Reporting success here left readBuf all zeros, which
-        // callers cannot distinguish from a genuine all-zero register: a failed
-        // CONFIG read made clearConfig() write 0x00 and disable EVERY
-        // protection (DR/OTP/OCP/OVP/UVP) instead of just clearing one bit.
-        return false;
-    }
-    while (_i2cPort->available())
-    {
-        readBuf[i] = (byte)_i2cPort->read();
-        i++;
+    if (len <= _i2cPort->available())
+    { // if len bytes were received
+        while (_i2cPort->available())
+        {
+            readBuf[i] = (byte)_i2cPort->read();
+            i++;
+        }
     }
     return true;
 }

@@ -19,7 +19,7 @@ void DisplayManager::showMessage(const char *msg) {
     _tft.fillScreen(TFT_BLACK);
     _tft.setTextColor(TFT_WHITE, TFT_BLACK);
     _tft.setTextSize(2);
-    // drawString ignores newline, split manually.
+    // TFT_eSPI's drawString does not interpret '\n', so split into lines.
     int y = 5;
     const char *lineStart = msg;
     for (const char *p = msg;; ++p) {
@@ -27,7 +27,7 @@ void DisplayManager::showMessage(const char *msg) {
             const int len = static_cast<int>(p - lineStart);
             if (len > 0) {
                 _tft.drawString(String(lineStart, len), 5, y);
-                y += 24;
+                y += 24;  // 2x font line height
             }
             if (*p == '\0') {
                 break;
@@ -37,7 +37,7 @@ void DisplayManager::showMessage(const char *msg) {
     }
 }
 
-void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
+void DisplayManager::update(const PDManager &pd, const ThermalManager &thermal,
                             const CurrentControl &current, const VoltageMonitor &voltage,
                             const PowerMonitor &power, const EfficiencyEstimator &efficiency) {
     const float pdVoltageV = pd.getVoltage();
@@ -53,28 +53,23 @@ void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
     _tft.setTextColor(TFT_WHITE, TFT_BLACK);
     _tft.setTextSize(2);
 
-    // PD contract plus input.
-    _tft.drawString("I " + String(pdVoltageV, 0) + "V/" + String(pdCurrentA, 1) + "A " +
+    // Negotiated PD profile with measured input voltage/current in braces.
+    _tft.drawString("PD " + String(pdVoltageV, 0) + "V/" + String(pdCurrentA, 0) + "A " +
                      String(measuredVoltageV, 1) + "/" + String(measuredCurrentA, 1), 5, 5);
 
-    // Output volts plus current limit.
-    _tft.drawString("Out: " + String(outputVoltageV, 1) + "V " + String(currentLimitA, 2) + "A ", 5, 35);
+    // Output voltage + current, and max power at current voltage + target current.
+    _tft.drawString("Out: " + String(outputVoltageV, 1) + "V " + String(currentLimitA, 2) + "A", 5, 35);
+    _tft.drawString("Max: " + String(maxPowerW, 1) + "W", 5, 65);
 
-    // Output power plus input volts.
-    _tft.drawString("Max: " + String(maxPowerW, 1) + "W  in " +
-                     String(measuredVoltageV, 1) + "V", 5, 65);
+    // Temperature.
+    _tft.drawString("Temp: " + String(tempC, 1) + " C", 5, 95);
 
-    // Temperature plus efficiency.
-    _tft.drawString("Temp: " + String(tempC, 1) + "C " + String(efficiencyPct, 0) + "%", 5, 95);
+    // VR efficiency estimate.
+    _tft.drawString("Eff: " + String(efficiencyPct, 0) + "%", 5, 120);
 
-    // Shutdown, chip fault, INA alert.
-    if (pd.isShutdownLatched()) {
-        _tft.drawString("STOP: " + String(pd.getShutdownReason()) + "      ", 5, 118);
-    } else if (pd.hasChipFault()) {
-        _tft.drawString("PD FAULT: " + String(pd.getFaultText()) + "     ", 5, 118);
-    } else if (power.hasAlert()) {
-        _tft.drawString("INA FAULT: " + String(power.getAlertText()) + "    ", 5, 118);
+    if (current.isShutdownLatched()) {
+        _tft.drawString("STOP: " + String(current.getShutdownReason()), 5, 145);
     } else {
-        _tft.drawString("                    ", 5, 118);
+        _tft.drawString("                    ", 5, 145);
     }
 }

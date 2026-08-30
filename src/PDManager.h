@@ -4,91 +4,87 @@
 #include <Wire.h>
 #include <AP33772S.h>
 
+/// Negotiation state for the active USB-PD source.
 enum class PDNegotiationState : uint8_t {
-    Disconnected,
-    AttachSettle,
-    Requesting,
-    Ready,
+    Disconnected,        ///< No source attached.
+    AttachSettle,        ///< Source just attached; letting the controller settle.
+    Requesting,          ///< A PDO was requested; waiting for the contract to settle.
+    Ready,               ///< A fixed-PDO contract is active.
 };
 
+/// Manages USB-PD source negotiation via the RotoPD Pro (AP33772S)
 class PDManager {
 public:
     PDManager() = default;
-    bool begin(TwoWire &wire, int8_t intPin);
+
+    /// Initializes the USB-PD controller on the specified I2C bus.
+    /// @param wire I2C bus reference.
+    /// @param intPin Optional GPIO connected to RotoPD Pro INT pin (-1 if unpinned).
+    /// @return true when the controller is available on I2C.
+    bool begin(TwoWire &wire, int8_t intPin = -1);
+
+    /// Advances the negotiation state machine. Call this periodically.
     void update();
 
-    // PD-input volts, not 5V aux.
-    void setMeasuredInputVoltage(float volts);
-    bool isReady() const;
-    bool justAttached() const;
-    // Contract voltage changed while Ready.
-    bool voltageJumped() const;
-    float getVoltage() const;
-    float getCurrent() const;
-    /// Latched cut-out with reason.
-    void shutdown(const char *reason = nullptr);
-    bool isShutdownLatched() const { return _shutdownLatched; }
-    const char *getShutdownReason() const { return _shutdownReason; }
+    /// Reports whether a USB-PD source is currently attached (may still be negotiating).
+    bool isAttached() const;
 
-    PDNegotiationState getState() const { return _state; }
-    uint8_t getStickyStatus() const { return _statusSticky; }
-    uint8_t getOpMode() { return _pd.readOpMode(); }
-    uint8_t getMsgResult() { return static_cast<uint8_t>(_pd.readMsgResult() & 0x07); }
-    const char *getFaultText() const;
-    bool hasChipFault() const;
+    /// Reports whether a contract is active and ready for use.
+    bool isReady() const;
+
+    /// True once when a source becomes ready (initial contract or after re-negotiation).
+    bool justAttached() const;
+
+    /// True once when a previously ready source goes away.
+    bool justDetached() const;
+
+    /// True once when the active contract voltage changes while already ready
+    /// (PSU raises or lowers the offered profile).
+    bool voltageJumped() const;
+
+    /// Returns the voltage of the active source contract in volts.
+    float getVoltage() const;
+
+    /// Returns the current limit of the active source contract in amps.
+    float getCurrent() const;
+
+    /// Returns the power limit of the active source contract in watts.
+    float getWattage() const;
+
+    /// Permanently switches off the RotoPD Pro's VBUS switch and prevents
+    /// further re-negotiation. Idempotent — safe to call multiple times.
+    void shutdown();
 
 private:
+    /// Highest fixed-PDO voltage we are willing to request.
     static constexpr float kMaxRequestVoltageV = 28.0f;
-    static constexpr float kMinUsablePdoCurrentA = 1.25f;
-    // Below this is sensor failure, not dead input.
-    static constexpr float kInputValidMinV = 3.0f;
-    static constexpr uint32_t kAttachSettlePollMs = 150;
 
+    /// Requests the best eligible fixed PDO found in the cached table.
+    /// @return true if a request was sent.
     bool requestBestPdo();
+
+    /// Scans the cached PDO table for the highest fixed PDO <= kMaxRequestVoltageV.
+    /// @return the 1-based PDO number (1..13) or 0 if none found.
     uint8_t findBestFixedPdo() const;
-    void applyStartupConfig();
-    uint8_t pollStatus();
-    bool attemptRecovery();
-    void enter(PDNegotiationState state);
-    uint8_t pollInputs(uint8_t &opMode);
-    void handleChipRestart(uint8_t status);
-    void handleProtectionTrip(uint8_t status);
-    void onDisconnected(uint8_t status, uint8_t opMode);
-    void onAttachSettle(uint8_t status);
-    void onRequesting();
-    void onReady(uint8_t status);
+
+    /// Checks if a power source is physically attached via OPMODE / VBUS voltage.
+    bool isSourcePhysicallyPresent();
 
     AP33772S _pd;
 
     int8_t _intPin = -1;
 
-    PDNegotiationState _state = PDNegotiationState::Disconnected;
-    uint32_t _stateEnteredAt = 0;
-    uint32_t _lastStatusPollMs = 0;
-    uint32_t _lastPdoPollMs = 0;
-    uint32_t _contractLostSinceMs = 0;
-    uint32_t _lastRecoveryMs = 0;
-    uint32_t _nextRequestAllowedMs = 0;
+    PDNegotiationState _state          = PDNegotiationState::Disconnected;
+    uint32_t           _stateEnteredAt = 0;
 
+    uint8_t _activePdoIndex  = 0; // 1-based PDO number, 0 = none
     float   _voltage = 0.0f;
     float   _current = 0.0f;
 
     bool _justAttached  = false;
+    bool _justDetached  = false;
     bool _voltageJumped = false;
 
     bool _shutdownLatched = false;
-    char _shutdownReason[17] = "";
-    bool _configured      = false;
-
-    // CC legacy + PD source bits.
-    static constexpr uint8_t kOpModeSourceMask = 0x03;
-    // VREQ match window.
-    static constexpr float kVoltageMatchV = 0.5f;
-    uint8_t _statusSticky = 0;
-    uint8_t _lastStatus = 0;
-    uint8_t _lastOpMode = 0xFF;
-    // PD-input volts; fail-open when invalid.
-    float _inputVoltageV = 0.0f;
-    bool _inputValid = false;
 };
 

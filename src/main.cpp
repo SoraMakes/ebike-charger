@@ -8,16 +8,15 @@
 #include "VoltageMonitor.h"
 #include "DisplayManager.h"
 #include "EfficiencyEstimator.h"
-#include "DiagLog.h"
 
-// TTGO T-Display I2C pins.
+// TTGO T-Display I2C pins (SDA=21, SCL=22).
 static constexpr int      I2C_SDA_PIN              = 21;
 static constexpr int      I2C_SCL_PIN              = 22;
-static constexpr float    kMinChargeVoltage        = 8.5f;  // Charger enable floor.
+static constexpr float    kMinChargeVoltage        = 8.5f;  // Minimum voltage required to enable the charger (eg minimum voltage of the boost converter)
 
-// Digital pins.
-static constexpr uint8_t kFanPin  = 12;  // Fan MOSFET driver.
-static constexpr int8_t  kPdIntPin = 13; // RotoPD Pro INT output.
+// TTGO T-Display: digital pins.
+static constexpr uint8_t kFanPin  = 12;  // LEDC PWM fan driver (MOSFET)
+static constexpr int8_t  kPdIntPin = 13; // PD trigger board (RotoPD Pro) INT output
 
 static PDManager      pdManager;
 static ThermalManager thermalManager;
@@ -27,10 +26,10 @@ static VoltageMonitor voltageMonitor;
 static DisplayManager displayManager;
 static EfficiencyEstimator efficiencyEstimator;
 
-static constexpr float kElectronicsPowerW          = 2.0f;  // Electronics overhead.
-static constexpr float kNoLoadInputW               = 5.0f;  // Absent-load floor.
+static constexpr float kElectronicsPowerW          = 2.0f;  // esp, sensors, fan  (measured: 1W over USB, fan 100%, no INA, no output current sensor)
 
-// Rollover-safe interval task.
+// A periodic task owns its interval, timestamp, and the action to run once due.
+// Unsigned subtraction remains safe across the millis() rollover.
 class PeriodicTask {
 public:
     PeriodicTask(uint32_t intervalMs, void (*action)()) : _intervalMs(intervalMs), _action(action) {}
@@ -58,6 +57,8 @@ static float calculateOutputPowerLimit(float inputPowerLimitW) {
     return regulatorInputPowerW * efficiencyEstimator.getEfficiency();
 }
 
+// --- Task actions -----------------------------------------------------------
+
 static void updateDisplay() {
     displayManager.update(pdManager, thermalManager, currentControl, voltageMonitor, powerMonitor, efficiencyEstimator);
 }
@@ -66,17 +67,33 @@ static void updateThermal() {
     thermalManager.update();
 }
 
+static void logThermalStatus() {
+    if (thermalManager.hasSensorFault()) {
+        Serial.println("[THERM] temperature unavailable; charging disabled");
+    } else {
+        Serial.printf("[THERM] temperature=%.1fC thermal-limit=%.1fW%s\n",
+                      thermalManager.getTemperatureC(),
+                      thermalManager.getOutputPowerLimitW(),
+                      thermalManager.isShutdownLatched() ? " shutdown-latched" : "");
+    }
+}
+
 static void updatePd() {
-    // PD-input volts for contract checks.
-    pdManager.setMeasuredInputVoltage(powerMonitor.getInputVoltage());
     pdManager.update();
 
+    if (pdManager.justDetached()) {
+        currentControl.safe();
+        Serial.println("[PD] Power source disconnected.");
+    }
+
     if (pdManager.voltageJumped()) {
-        currentControl.minimumCurrent();
+        currentControl.safe();
     }
 
     if (pdManager.justAttached()) {
-        currentControl.minimumCurrent();
+        currentControl.safe();
+        Serial.println("[PD] Voltage settled; waiting 100 ms for output to stabilize.");
+        delay(100);
     }
 }
 
@@ -88,63 +105,41 @@ static void updatePowerMonitor() {
     powerMonitor.update();
 }
 
-// PD plus thermal status.
-static void logSystemDiagnostics() {
-    static const char *kStateNames[] = {"DISC", "SETTLE", "REQ", "READY"};
-    const char *inaAlert = powerMonitor.getAlertText();
-    const bool hasInaAlert = (inaAlert != nullptr && inaAlert[0] != '\0');
-    Serial.printf("[PD] st=%s contract=%.1fV/%.2fA opmode=0x%02X msgrlt=%u sticky=0x%02X%s%s%s%s ina=%.2fV/%.2fA out=%.2fV pot=%d temp=%.1fC thlim=%.1fW\n",
-        kStateNames[static_cast<uint8_t>(pdManager.getState())],
-        pdManager.getVoltage(), pdManager.getCurrent(),
-        pdManager.getOpMode(), pdManager.getMsgResult(), pdManager.getStickyStatus(),
-        pdManager.hasChipFault() ? " FAULT:" : "", pdManager.getFaultText(),
-        hasInaAlert ? " INA:" : "", hasInaAlert ? inaAlert : "",
-        powerMonitor.getInputVoltage(), powerMonitor.getInputCurrent(),
-        voltageMonitor.getVoltage(), currentControl.getDigipotStep(),
-        thermalManager.getTemperatureC(), thermalManager.getOutputPowerLimitW());
-}
-
-static void dumpDiagnosticHistory() {
-    DiagLog::dump();
+static void logNoSource() {
+    Serial.println("[PD] No power source attached.");
 }
 
 static void updateCurrentControl() {
-    // INA volts budget; contract current target.
-    const float inputVoltageV = powerMonitor.getInputVoltage();
-    const float pdPowerLimit = pdManager.getCurrent() * inputVoltageV;
+    const float pdPowerLimit = pdManager.getCurrent() * powerMonitor.getInputVoltage();
     const float pdOutputPowerLimit = calculateOutputPowerLimit(pdPowerLimit);
     const float thermalOutputPowerLimit = thermalManager.getOutputPowerLimitW();
     const float outputPowerLimit = min(pdOutputPowerLimit, thermalOutputPowerLimit);
-    const float actualInputPowerW = inputVoltageV * powerMonitor.getInputCurrent();
-    const bool noLoad = actualInputPowerW < kNoLoadInputW;
 
-    currentControl.update(outputPowerLimit, noLoad);
+    currentControl.update(outputPowerLimit);
 }
 
+// Feeds the efficiency estimator with the allowed vs. measured input power.
 static void updateEfficiency() {
-    // INA volts/current; contract current is allowed.
     const float inputVoltageV = powerMonitor.getInputVoltage();
     const float allowedInputPowerW = pdManager.getCurrent() * inputVoltageV;
     const float actualInputPowerW  = inputVoltageV * powerMonitor.getInputCurrent();
 
-    const bool noLoad = actualInputPowerW < kNoLoadInputW;
-
     efficiencyEstimator.update(allowedInputPowerW - kElectronicsPowerW,
                                actualInputPowerW  - kElectronicsPowerW,
-                               currentControl.isRampUpFinished(),
-                               noLoad);
+                               currentControl.isRampUpFinished());
 }
 
-static PeriodicTask displayTask(100, updateDisplay);
+// --- Task table: interval and action defined together ------------------------
+
+static PeriodicTask displayTask(500, updateDisplay);
 static PeriodicTask thermalUpdateTask(1000, updateThermal);
-// Sub-second debounce/timeout tick.
-static PeriodicTask pdUpdateTask(50, updatePd);
+static PeriodicTask thermalLogTask(5000, logThermalStatus);
+static PeriodicTask pdUpdateTask(75+925, updatePd);
 static PeriodicTask voltageUpdateTask(100, updateVoltage);
 static PeriodicTask powerMonitorUpdateTask(50, updatePowerMonitor);
 static PeriodicTask currentUpdateTask(50, updateCurrentControl);
 static PeriodicTask efficiencyUpdateTask(50, updateEfficiency);
-static PeriodicTask pdDiagTask(2000, logSystemDiagnostics);
-static PeriodicTask diagHistoryTask(10000, dumpDiagnosticHistory);
+static PeriodicTask noSourceLogTask(1000, logNoSource);
 
 void setup() {
     Serial.begin(115200);
@@ -153,54 +148,50 @@ void setup() {
 
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
-    // Digipot powers mid-scale.
-    currentControl.begin(Wire, voltageMonitor);
-
     displayManager.begin();
     efficiencyEstimator.begin();
 
-    // Shutdown targets before sensors.
+    voltageMonitor.begin(33, currentControl);  // TTGO T-Display: voltage-divider ADC input
+    currentControl.begin(Wire, voltageMonitor, pdManager);
+    if (!thermalManager.begin(Wire, kFanPin, currentControl)) {
+        Serial.println("[THERM] AHT10 unavailable; charging disabled.");
+    }
+
     while (!pdManager.begin(Wire, kPdIntPin)) {
+        Serial.println("[SYSTEM] ERROR: PD controller not found on I2C. Retrying...");
         displayManager.showMessage("PD controller\nnot found!");
         delay(2000);
     }
 
-    voltageMonitor.begin(33, pdManager);  // Divider ADC input.
-    if (!thermalManager.begin(Wire, kFanPin, pdManager)) {
-        DiagLog::event("safety temp sensor");
-    }
-
     if (!powerMonitor.begin()) {
-        // No rail truth without INA.
-        pdManager.shutdown("ina missing");
+        Serial.println("[SYSTEM] WARNING: INA238 not found on I2C.");
     }
 }
 
 void loop() {
+    // Display always runs.
     displayTask.tick();
-    thermalUpdateTask.tick();
 
-    powerMonitorUpdateTask.tick();
+    // Thermal & fan always run, regardless of PD state.
+    thermalUpdateTask.tick();
+    thermalLogTask.tick();
+
     pdUpdateTask.tick();
     voltageUpdateTask.tick();
-
-    pdDiagTask.tick();
-    diagHistoryTask.tick();
-
-    if (pdManager.isShutdownLatched()) {
-        currentControl.minimumCurrent();
-        return;
-    }
+    powerMonitorUpdateTask.tick();
 
     if (!pdManager.isReady()) {
-        currentControl.minimumCurrent();
+        currentControl.safe();
+        if (!pdManager.isAttached()) {
+            noSourceLogTask.tick();
+        }
         return;
     }
 
     const float voltage = pdManager.getVoltage();
 
     if (voltage < kMinChargeVoltage) {
-        currentControl.minimumCurrent();
+        currentControl.safe();
         return;
     }
 

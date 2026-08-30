@@ -1,6 +1,5 @@
 #include "ThermalManager.h"
-#include "PDManager.h"
-#include "DiagLog.h"
+#include "CurrentControl.h"
 
 static constexpr float kFanMinimumTemperatureC = 32.0f;
 static constexpr float kFanFullTemperatureC = 38.0f;
@@ -9,24 +8,26 @@ static constexpr float kShutdownTemperatureC = 50.0f;
 static constexpr float kMaximumThermalPowerW = 100.0f;
 static constexpr uint16_t kPwmRange = 1023;
 static constexpr uint32_t kFanPwmFrequencyHz = 16000;
-static constexpr uint16_t kFanMinimumDuty = 563;
+static constexpr uint16_t kFanMinimumDuty = 563;  // approximately 55% of 1023
 static constexpr uint16_t kFanFullDuty = kPwmRange;
 
-// Fan PWM channel.
+// ESP32 LEDC channel used for the fan PWM.
 static constexpr uint8_t kFanLedcChannel = 0;
 
-bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin, PDManager &pdManager) {
+bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin, CurrentControl &currentControl) {
     _fanPin = fanPin;
-    _pdManager = &pdManager;
+    _currentControl = &currentControl;
+    // ESP32: configure the LEDC PWM peripheral for the fan.
     const uint32_t configuredFrequency = ledcSetup(kFanLedcChannel, kFanPwmFrequencyHz, 10);
     if (configuredFrequency == 0) {
-        DiagLog::event("safety fan pwm");
+        Serial.println("[THERM] Fan PWM setup failed");
     }
     pinMode(_fanPin, OUTPUT);
-    // pinMode before attach.
+    // Attach LEDC after pinMode: on ESP32 pinMode configures the GPIO matrix
+    // and must not overwrite the peripheral output routing.
     ledcAttachPin(_fanPin, kFanLedcChannel);
 
-    applyFanPwm(kFanMinimumDuty);
+    applyFanPwm(kFanFullDuty);
     _sensorFault = !_sensor.begin(0x76);
     if (_sensorFault) {
         enterShutdown("Temp failed");
@@ -95,15 +96,16 @@ bool ThermalManager::isShutdownLatched() const {
 }
 
 void ThermalManager::applyFanPwm(uint16_t duty) const {
+    // ESP32: write via the LEDC peripheral.
     ledcWrite(kFanLedcChannel, duty);
 }
 
 void ThermalManager::enterShutdown(const char *reason) {
     if (!_shutdownLatched) {
-        DiagLog::event("safety %s", reason);
+        Serial.printf("[THERM] Shutdown: %s\n", reason);
     }
     _shutdownLatched = true;
     _outputPowerLimitW = 0.0f;
     applyFanPwm(kFanFullDuty);
-    _pdManager->shutdown(reason);
+    _currentControl->requestShutdown(reason);
 }
