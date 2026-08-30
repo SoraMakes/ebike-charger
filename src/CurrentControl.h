@@ -4,11 +4,13 @@
 #include <Wire.h>
 #include "VoltageMonitor.h"
 
+class PDManager;
+
 /// Controls the regulator enable state and open-loop charge-current setpoint.
 class CurrentControl {
 public:
     /// Initializes the controller and voltage monitor at a safe output level.
-    void begin(TwoWire &wire, VoltageMonitor &voltageMonitor);
+    void begin(TwoWire &wire, VoltageMonitor &voltageMonitor, PDManager &pdManager);
 
     /// Applies an upper bound to the output power at the latest measured
     /// output voltage.
@@ -26,6 +28,10 @@ public:
     /// Returns the currently configured output current limit in amps
     /// (0 when the regulator is disabled).
     float getCurrentLimitA() const;
+
+    /// Returns true once the current setpoint has ramped up to its target
+    /// (i.e. the setpoint is no longer increasing). False while disabled.
+    bool isRampUpFinished() const;
 
     /// Returns true after a permanent shutdown request. Once latched, the
     /// regulator can never be re-enabled until reset.
@@ -45,8 +51,10 @@ public:
 private:
     TwoWire *_wire         = nullptr;
     VoltageMonitor *_voltageMonitor = nullptr;
+    PDManager *_pdManager  = nullptr;
     /// Level -1 disables the regulator; level 0 enables it at digipot step 0.
     int16_t  _powerLevel   = -1;
+    int16_t  _targetLevel  = -1;
     int16_t  _lastDigipotStep = -1;
     uint32_t _lastIncreaseAt = 0;
     uint32_t _lastVoltageLogAt = 0;

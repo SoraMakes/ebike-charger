@@ -28,7 +28,7 @@ bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin, CurrentControl &curren
     ledcAttachPin(_fanPin, kFanLedcChannel);
 
     applyFanPwm(kFanFullDuty);
-    _sensorFault = !_sensor.begin(&wire, 0, 0x38);
+    _sensorFault = !_sensor.begin(0x76);
     if (_sensorFault) {
         enterShutdown("Temp failed");
         return false;
@@ -45,19 +45,17 @@ void ThermalManager::update() {
         return;
     }
 
-    sensors_event_t humidity;
-    sensors_event_t temperature;
-    _sensor.getEvent(&humidity, &temperature);
+    const float temperature = _sensor.readTemperature();
 
-    if (!isfinite(temperature.temperature) ||
-        temperature.temperature < -40.0f || temperature.temperature > 85.0f) {
+    if (!isfinite(temperature) ||
+        temperature < -40.0f || temperature > 85.0f) {
         _sensorFault = true;
         enterShutdown("Temp invalid");
         return;
     }
 
     _sensorFault = false;
-    _temperatureC = temperature.temperature;
+    _temperatureC = temperature;
 
     uint16_t fanDuty = kFanMinimumDuty;
     if (_temperatureC >= kFanFullTemperatureC) {

@@ -1,28 +1,31 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <math.h>
 #include "PDManager.h"
 #include "ThermalManager.h"
-// #include "PowerMonitor.h"
+#include "PowerMonitor.h"
 #include "CurrentControl.h"
 #include "VoltageMonitor.h"
 #include "DisplayManager.h"
+#include "EfficiencyEstimator.h"
 
 // TTGO T-Display I2C pins (SDA=21, SCL=22).
 static constexpr int      I2C_SDA_PIN              = 21;
 static constexpr int      I2C_SCL_PIN              = 22;
 static constexpr float    kMinChargeVoltage        = 8.5f;  // Minimum voltage required to enable the charger (eg minimum voltage of the boost converter)
 
-// TTGO T-Display: fan on GPIO12 (free).
-static constexpr uint8_t kFanPin = 12;
+// TTGO T-Display: digital pins.
+static constexpr uint8_t kFanPin  = 12;  // LEDC PWM fan driver (MOSFET)
+static constexpr int8_t  kPdIntPin = 13; // PD trigger board (RotoPD Pro) INT output
 
 static PDManager      pdManager;
 static ThermalManager thermalManager;
-// static PowerMonitor   powerMonitor;
+static PowerMonitor   powerMonitor;
 static CurrentControl currentControl;
 static VoltageMonitor voltageMonitor;
 static DisplayManager displayManager;
+static EfficiencyEstimator efficiencyEstimator;
 
-static constexpr float kVoltageRegulatorEfficiency = 0.88f;  // calculated efficiency at 20V/5A: 90%
 static constexpr float kElectronicsPowerW          = 2.0f;  // esp, sensors, fan  (measured: 1W over USB, fan 100%, no INA, no output current sensor)
 
 // A periodic task owns its interval, timestamp, and the action to run once due.
@@ -51,13 +54,13 @@ static float calculateOutputPowerLimit(float inputPowerLimitW) {
     }
 
     const float regulatorInputPowerW = inputPowerLimitW - kElectronicsPowerW;
-    return regulatorInputPowerW * kVoltageRegulatorEfficiency;
+    return regulatorInputPowerW * efficiencyEstimator.getEfficiency();
 }
 
 // --- Task actions -----------------------------------------------------------
 
 static void updateDisplay() {
-    displayManager.update(pdManager, thermalManager, currentControl, voltageMonitor);
+    displayManager.update(pdManager, thermalManager, currentControl, voltageMonitor, powerMonitor, efficiencyEstimator);
 }
 
 static void updateThermal() {
@@ -98,12 +101,16 @@ static void updateVoltage() {
     voltageMonitor.update();
 }
 
+static void updatePowerMonitor() {
+    powerMonitor.update();
+}
+
 static void logNoSource() {
     Serial.println("[PD] No power source attached.");
 }
 
 static void updateCurrentControl() {
-    const float pdPowerLimit = pdManager.getWattage();
+    const float pdPowerLimit = pdManager.getCurrent() * powerMonitor.getInputVoltage();
     const float pdOutputPowerLimit = calculateOutputPowerLimit(pdPowerLimit);
     const float thermalOutputPowerLimit = thermalManager.getOutputPowerLimitW();
     const float outputPowerLimit = min(pdOutputPowerLimit, thermalOutputPowerLimit);
@@ -111,14 +118,27 @@ static void updateCurrentControl() {
     currentControl.update(outputPowerLimit);
 }
 
+// Feeds the efficiency estimator with the allowed vs. measured input power.
+static void updateEfficiency() {
+    const float inputVoltageV = powerMonitor.getInputVoltage();
+    const float allowedInputPowerW = pdManager.getCurrent() * inputVoltageV;
+    const float actualInputPowerW  = inputVoltageV * powerMonitor.getInputCurrent();
+
+    efficiencyEstimator.update(allowedInputPowerW - kElectronicsPowerW,
+                               actualInputPowerW  - kElectronicsPowerW,
+                               currentControl.isRampUpFinished());
+}
+
 // --- Task table: interval and action defined together ------------------------
 
 static PeriodicTask displayTask(500, updateDisplay);
 static PeriodicTask thermalUpdateTask(1000, updateThermal);
 static PeriodicTask thermalLogTask(5000, logThermalStatus);
-static PeriodicTask pdUpdateTask(75, updatePd);
+static PeriodicTask pdUpdateTask(75+925, updatePd);
 static PeriodicTask voltageUpdateTask(100, updateVoltage);
+static PeriodicTask powerMonitorUpdateTask(50, updatePowerMonitor);
 static PeriodicTask currentUpdateTask(50, updateCurrentControl);
+static PeriodicTask efficiencyUpdateTask(50, updateEfficiency);
 static PeriodicTask noSourceLogTask(1000, logNoSource);
 
 void setup() {
@@ -129,21 +149,23 @@ void setup() {
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
     displayManager.begin();
+    efficiencyEstimator.begin();
 
     voltageMonitor.begin(33, currentControl);  // TTGO T-Display: voltage-divider ADC input
-    currentControl.begin(Wire, voltageMonitor);
+    currentControl.begin(Wire, voltageMonitor, pdManager);
     if (!thermalManager.begin(Wire, kFanPin, currentControl)) {
         Serial.println("[THERM] AHT10 unavailable; charging disabled.");
     }
 
-    while (!pdManager.begin(Wire)) {
+    while (!pdManager.begin(Wire, kPdIntPin)) {
         Serial.println("[SYSTEM] ERROR: PD controller not found on I2C. Retrying...");
+        displayManager.showMessage("PD controller\nnot found!");
         delay(2000);
     }
 
-    // if (!powerMonitor.begin(Wire)) {
-    //     Serial.println("[SYSTEM] WARNING: INA219 not found on I2C.");
-    // }
+    if (!powerMonitor.begin()) {
+        Serial.println("[SYSTEM] WARNING: INA238 not found on I2C.");
+    }
 }
 
 void loop() {
@@ -156,6 +178,7 @@ void loop() {
 
     pdUpdateTask.tick();
     voltageUpdateTask.tick();
+    powerMonitorUpdateTask.tick();
 
     if (!pdManager.isReady()) {
         currentControl.safe();
@@ -172,6 +195,6 @@ void loop() {
         return;
     }
 
-    // powerMonitor.update();
     currentUpdateTask.tick();
+    efficiencyUpdateTask.tick();
 }

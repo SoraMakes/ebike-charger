@@ -1,9 +1,9 @@
 #include "CurrentControl.h"
+#include "PDManager.h"
 
 #include <math.h>
 
 static constexpr uint8_t kMCP4018Address = 0x2F; // hardware-fixed
-static constexpr uint8_t kRegulatorEnablePin = 13;  // TTGO T-Display GPIO13 (was D5 on D1 mini; GPIO14 not available on T-Display)
 
 static constexpr uint8_t kMaxStep = 127;
 static constexpr uint32_t kIncreaseIntervalMs = 250;
@@ -22,12 +22,11 @@ static constexpr float kCurrentAtStepZeroA   = 0.14f;  // digipot: 125 Ohm
 static constexpr float kCurrentPerStepA      = 0.0572f;  // digipot: 35,8 Ohm per step
 static constexpr float kMaxAllowedOutputAmps = 3.0f;  // Software safety limit
 
-void CurrentControl::begin(TwoWire &wire, VoltageMonitor &voltageMonitor) {
+void CurrentControl::begin(TwoWire &wire, VoltageMonitor &voltageMonitor, PDManager &pdManager) {
     _wire = &wire;
     _voltageMonitor = &voltageMonitor;
+    _pdManager = &pdManager;
     _lastDigipotStep = -1;
-    pinMode(kRegulatorEnablePin, OUTPUT);
-    digitalWrite(kRegulatorEnablePin, LOW);
     safe();
 }
 
@@ -47,7 +46,7 @@ void CurrentControl::test(uint8_t maxLevel) {
     for (uint8_t level = 0; level <= testMaxLevel; ++level) {
         _powerLevel = level;
         writeDigipot(level);
-        digitalWrite(kRegulatorEnablePin, HIGH);
+
         Serial.printf("[CURRENT TEST] level %u, digipot step %u\n",
                       level, level);
 
@@ -67,7 +66,6 @@ void CurrentControl::test_set_fixed(uint8_t level) {
 
     _powerLevel = testLevel;
     writeDigipot(testLevel);
-    digitalWrite(kRegulatorEnablePin, HIGH);
     Serial.printf("[CURRENT TEST] level %u, digipot step %u\n",
                   testLevel, testLevel);
     delay(5*60*1000);  // 5 minutes
@@ -94,6 +92,7 @@ void CurrentControl::update(float limitWatts) {
     const float targetAmps = limitWatts / outputVoltageV;
     const float currentLimitA = min(targetAmps, kMaxAllowedOutputAmps);
     const int16_t targetLevel = ampsToStep(currentLimitA);
+    _targetLevel = targetLevel;
 
     if (targetLevel < 0) {
         safe();
@@ -135,7 +134,6 @@ void CurrentControl::update(float limitWatts) {
         ? 0
         : static_cast<uint8_t>(_powerLevel);
     writeDigipot(step);
-    digitalWrite(kRegulatorEnablePin, HIGH);
 
     if (_powerLevel != previousLevel) {
         const float configuredCurrentA = kCurrentAtStepZeroA + static_cast<float>(_powerLevel) * kCurrentPerStepA;
@@ -146,7 +144,7 @@ void CurrentControl::update(float limitWatts) {
 
 void CurrentControl::safe() {
     _powerLevel = -1;
-    digitalWrite(kRegulatorEnablePin, LOW);
+    _targetLevel = -1;
     writeDigipot(0);
 }
 
@@ -155,6 +153,10 @@ float CurrentControl::getCurrentLimitA() const {
         return 0.0f;
     }
     return kCurrentAtStepZeroA + static_cast<float>(_powerLevel) * kCurrentPerStepA;
+}
+
+bool CurrentControl::isRampUpFinished() const {
+    return _powerLevel >= 0 && _powerLevel >= _targetLevel;
 }
 
 void CurrentControl::requestShutdown(const char *reason) {
@@ -166,6 +168,7 @@ void CurrentControl::requestShutdown(const char *reason) {
     strncpy(_shutdownReason, reason ? reason : "unknown", sizeof(_shutdownReason) - 1);
     _shutdownReason[sizeof(_shutdownReason) - 1] = '\0';
     Serial.printf("[CURRENT CONTROL] Shutdown: %s\n", _shutdownReason);
+    _pdManager->shutdown();
     safe();
 }
 

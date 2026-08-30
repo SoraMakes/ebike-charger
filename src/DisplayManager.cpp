@@ -3,6 +3,8 @@
 #include "ThermalManager.h"
 #include "CurrentControl.h"
 #include "VoltageMonitor.h"
+#include "PowerMonitor.h"
+#include "EfficiencyEstimator.h"
 
 void DisplayManager::begin() {
     _tft.init();
@@ -13,20 +15,47 @@ void DisplayManager::begin() {
     _tft.setTextSize(2);
 }
 
+void DisplayManager::showMessage(const char *msg) {
+    _tft.fillScreen(TFT_BLACK);
+    _tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    _tft.setTextSize(2);
+    // TFT_eSPI's drawString does not interpret '\n', so split into lines.
+    int y = 5;
+    const char *lineStart = msg;
+    for (const char *p = msg;; ++p) {
+        if (*p == '\n' || *p == '\0') {
+            const int len = static_cast<int>(p - lineStart);
+            if (len > 0) {
+                _tft.drawString(String(lineStart, len), 5, y);
+                y += 24;  // 2x font line height
+            }
+            if (*p == '\0') {
+                break;
+            }
+            lineStart = p + 1;
+        }
+    }
+}
+
 void DisplayManager::update(const PDManager &pd, const ThermalManager &thermal,
-                            const CurrentControl &current, const VoltageMonitor &voltage) {
+                            const CurrentControl &current, const VoltageMonitor &voltage,
+                            const PowerMonitor &power, const EfficiencyEstimator &efficiency) {
     const float pdVoltageV = pd.getVoltage();
     const float pdCurrentA = pd.getCurrent();
+    const float measuredVoltageV = power.getInputVoltage();
+    const float measuredCurrentA = power.getInputCurrent();
     const float outputVoltageV = voltage.getVoltage();
     const float currentLimitA  = current.getCurrentLimitA();
     const float maxPowerW      = outputVoltageV * currentLimitA;
     const float tempC          = thermal.getTemperatureC();
+    const float efficiencyPct  = efficiency.getEfficiency() * 100.0f;
 
     _tft.setTextColor(TFT_WHITE, TFT_BLACK);
     _tft.setTextSize(2);
 
-    // Negotiated PD profile.
-    _tft.drawString("PD: " + String(pdVoltageV, 0) + "V " + String(pdCurrentA, 2) + "A", 5, 5);
+    // Negotiated PD profile with measured input voltage/current in braces.
+    _tft.drawString("PD " + String(pdVoltageV, 0) + "V/" + String(pdCurrentA, 0) + "A " +
+                     String(measuredVoltageV, 1) + "/" + String(measuredCurrentA, 1), 5, 5);
 
     // Output voltage + current, and max power at current voltage + target current.
     _tft.drawString("Out: " + String(outputVoltageV, 1) + "V " + String(currentLimitA, 2) + "A", 5, 35);
@@ -35,9 +64,12 @@ void DisplayManager::update(const PDManager &pd, const ThermalManager &thermal,
     // Temperature.
     _tft.drawString("Temp: " + String(tempC, 1) + " C", 5, 95);
 
+    // VR efficiency estimate.
+    _tft.drawString("Eff: " + String(efficiencyPct, 0) + "%", 5, 120);
+
     if (current.isShutdownLatched()) {
-        _tft.drawString("STOP: " + String(current.getShutdownReason()), 5, 120);
+        _tft.drawString("STOP: " + String(current.getShutdownReason()), 5, 145);
     } else {
-        _tft.drawString("                    ", 5, 120);
+        _tft.drawString("                    ", 5, 145);
     }
 }

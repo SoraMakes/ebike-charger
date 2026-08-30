@@ -2,29 +2,28 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include <Adafruit_HUSB238.h>
+#include <AP33772S.h>
 
 /// Negotiation state for the active USB-PD source.
 enum class PDNegotiationState : uint8_t {
     Disconnected,        ///< No source attached.
-    AttachSettle,        ///< Source just attached; letting CC/cable detection settle.
-    WaitingCapabilities, ///< Waiting for the source's capability table.
-    Requesting,          ///< A PDO was selected and requested; waiting for the contract.
-    Ready,               ///< The requested (or default 5 V) contract is active.
+    AttachSettle,        ///< Source just attached; letting the controller settle.
+    Requesting,          ///< A PDO was requested; waiting for the contract to settle.
+    Ready,               ///< A fixed-PDO contract is active.
 };
 
-/// Manages USB-PD source negotiation: detects attachment, probes the
-/// available voltages from highest to lowest, requests the best one, and
-/// re-negotiates automatically on reconnect or contract fallback.
+/// Manages USB-PD source negotiation via the RotoPD Pro (AP33772S)
 class PDManager {
 public:
     PDManager() = default;
 
     /// Initializes the USB-PD controller on the specified I2C bus.
-    /// @return true when the controller is available.
-    bool begin(TwoWire &wire);
+    /// @param wire I2C bus reference.
+    /// @param intPin Optional GPIO connected to RotoPD Pro INT pin (-1 if unpinned).
+    /// @return true when the controller is available on I2C.
+    bool begin(TwoWire &wire, int8_t intPin = -1);
 
-    /// Advances the negotiation state machine. Call this periodically (e.g. every 100-250 ms).
+    /// Advances the negotiation state machine. Call this periodically.
     void update();
 
     /// Reports whether a USB-PD source is currently attached (may still be negotiating).
@@ -34,14 +33,14 @@ public:
     bool isReady() const;
 
     /// True once when a source becomes ready (initial contract or after re-negotiation).
-    bool justAttached();
+    bool justAttached() const;
 
     /// True once when a previously ready source goes away.
-    bool justDetached();
+    bool justDetached() const;
 
     /// True once when the active contract voltage changes while already ready
-    /// (e.g. the source falls back to 5 V).
-    bool voltageJumped();
+    /// (PSU raises or lowers the offered profile).
+    bool voltageJumped() const;
 
     /// Returns the voltage of the active source contract in volts.
     float getVoltage() const;
@@ -52,29 +51,40 @@ public:
     /// Returns the power limit of the active source contract in watts.
     float getWattage() const;
 
+    /// Permanently switches off the RotoPD Pro's VBUS switch and prevents
+    /// further re-negotiation. Idempotent — safe to call multiple times.
+    void shutdown();
+
 private:
-    /// Requests source capabilities and (re)starts negotiation.
-    void requestCapabilities();
+    /// Highest fixed-PDO voltage we are willing to request.
+    static constexpr float kMaxRequestVoltageV = 28.0f;
 
-    /// Scans available PDOs from highest to lowest voltage, logs them, and
-    /// requests the first (highest) one found.
-    /// @return true if a PDO above 5 V was found and requested.
-    bool selectAndRequestBestPdo();
+    /// Requests the best eligible fixed PDO found in the cached table.
+    /// @return true if a request was sent.
+    bool requestBestPdo();
 
-    Adafruit_HUSB238 _husb;
+    /// Scans the cached PDO table for the highest fixed PDO <= kMaxRequestVoltageV.
+    /// @return the 1-based PDO number (1..13) or 0 if none found.
+    uint8_t findBestFixedPdo() const;
 
-    PDNegotiationState _state            = PDNegotiationState::Disconnected;
-    uint32_t           _stateEnteredAt   = 0;
-    float              _requestedVoltage = 0.0f;
-    uint8_t            _failedAttachReads = 0;
+    /// Checks if a power source is physically attached via OPMODE / VBUS voltage.
+    bool isSourcePhysicallyPresent();
 
-    float _voltage = 0.0f;
-    float _current = 0.0f;
+    AP33772S _pd;
+
+    int8_t _intPin = -1;
+
+    PDNegotiationState _state          = PDNegotiationState::Disconnected;
+    uint32_t           _stateEnteredAt = 0;
+
+    uint8_t _activePdoIndex  = 0; // 1-based PDO number, 0 = none
+    float   _voltage = 0.0f;
+    float   _current = 0.0f;
 
     bool _justAttached  = false;
     bool _justDetached  = false;
     bool _voltageJumped = false;
 
-    static float _voltageFromActiveSetting(HUSB238_VoltageSetting vs);
-    static float _ampsFromCurrentSetting(HUSB238_CurrentSetting cur);
+    bool _shutdownLatched = false;
 };
+

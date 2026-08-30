@@ -4,8 +4,10 @@
 static constexpr float kShutdownVoltageV = 42.5f;
 
 // ESP32 (TTGO T-Display) ADC: 12-bit, 0..4095 counts.
-// The divider maps ~51.86 V full scale to the ADC input range.
-static constexpr float kAdcVoltageFullScaleV = 51.86f;
+// Divider: 219k (top) / 4.86k (bottom) -> ratio = 4.86 / 223.86 = 0.021707
+// With ADC_0db (~1.1 V full scale input), this maps ~50.67 V at the
+// charger output to the ADC input range.
+static constexpr float kAdcVoltageFullScaleV = 50.67f;
 static constexpr float kAdcResolution       = 4096.0f;
 
 // Endpoint correction: +0.3 V at 30 V and -0.3 V at 41 V.
@@ -21,8 +23,8 @@ void VoltageMonitor::begin(uint8_t adcPin, CurrentControl &currentControl) {
     _adcPin = adcPin;
     _currentControl = &currentControl;
     pinMode(_adcPin, INPUT);
-    // ESP32: use the widest input range (11 dB) for the ~50 V divider.
-    analogSetPinAttenuation(_adcPin, ADC_11db);
+    // ESP32: no internal voltage divider.
+    analogSetPinAttenuation(_adcPin, ADC_0db);
 }
 
 void VoltageMonitor::update() {

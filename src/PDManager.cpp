@@ -1,15 +1,39 @@
 #include "PDManager.h"
 
-// Delay after attach detection before the source is asked for its
-// capabilities, giving CC/cable detection time to settle.
-static constexpr uint32_t kAttachSettleMs        = 300;
-// How long to wait for a capability/contract response before retrying.
-static constexpr uint32_t kNegotiationTimeoutMs  = 2000;
-// Ignore a few failed attachment reads; an I2C failure is not a disconnect.
-static constexpr uint8_t kDetachReadThreshold    = 3;
+#include <math.h>
 
-bool PDManager::begin(TwoWire &wire) {
-    return _husb.begin(HUSB238_I2CADDR_DEFAULT, &wire);
+// Delay after attach detection before the controller's profile list is trusted.
+static constexpr uint32_t kAttachSettleMs       = 300;
+// How long to wait for a requested contract to become active before retrying.
+static constexpr uint32_t kNegotiationTimeoutMs = 2000;
+// While Ready, how often to re-check the source's profile list for changes
+// (in addition to reacting immediately to the NEWPDO status bit).
+static constexpr uint32_t kProfileRecheckMs     = 500;
+
+bool PDManager::begin(TwoWire &wire, int8_t intPin) {
+    _intPin = intPin;
+    if (_intPin >= 0) {
+        pinMode(_intPin, INPUT);
+    }
+
+    if (!_pd.begin(wire)) {
+        return false;
+    }
+
+    _pd.clearConfig(AP33772_CONFIG::UVP_EN); // required for RotoPD Pro; avoids UVP hard resets
+    _pd.setInterruptRegisterMask(STARTED_MSK | READY_MSK | NEWPDO_MSK);
+    _pd.setOutput(0); // VBUS off until a contract is confirmed
+    return true;
+}
+
+bool PDManager::isSourcePhysicallyPresent() {
+    const uint8_t opMode = _pd.readOpMode();
+    // Bit 1 = PDMOD (PD source), Bit 0 = LGCYMOD (Legacy non-PD source)
+    if ((opMode & 0x03) != 0) {
+        return true;
+    }
+    // Fallback check: VBUS voltage >= 3.0V
+    return (_pd.readVoltage() >= 3000);
 }
 
 void PDManager::update() {
@@ -17,140 +41,127 @@ void PDManager::update() {
     _justDetached  = false;
     _voltageJumped = false;
 
-    const bool attached = _husb.isAttached();
-
-    if (!attached) {
-        if (_state == PDNegotiationState::Disconnected) {
-            return;
-        }
-
-        if (_failedAttachReads < kDetachReadThreshold) {
-            ++_failedAttachReads;
-        }
-        if (_failedAttachReads < kDetachReadThreshold) {
-            return;
-        }
-
-        if (_state == PDNegotiationState::Ready) {
-            _justDetached = true;
-        }
-        _state   = PDNegotiationState::Disconnected;
-        _voltage = 0.0f;
-        _current = 0.0f;
+    if (_shutdownLatched) {
         return;
     }
 
-    _failedAttachReads = 0;
+    uint8_t status = 0;
+    if (_intPin >= 0 && digitalRead(_intPin) == HIGH) {
+        status = _pd.readStatus();
+    }
+
+    // Handle physical disconnection
+    if (_state != PDNegotiationState::Disconnected) {
+        if (!isSourcePhysicallyPresent()) {
+            if (_state == PDNegotiationState::Ready) {
+                _justDetached = true;
+            }
+            _pd.setOutput(0);
+            _state          = PDNegotiationState::Disconnected;
+            _activePdoIndex = 0;
+            _voltage        = 0.0f;
+            _current        = 0.0f;
+            return;
+        }
+    }
 
     switch (_state) {
         case PDNegotiationState::Disconnected:
-            _state          = PDNegotiationState::AttachSettle;
-            _stateEnteredAt = millis();
-            break;
-
-        case PDNegotiationState::AttachSettle:
-            if (millis() - _stateEnteredAt >= kAttachSettleMs) {
-                requestCapabilities();
+            if ((status & STARTED_MSK) || isSourcePhysicallyPresent()) {
+                _state          = PDNegotiationState::AttachSettle;
+                _stateEnteredAt = millis();
             }
             break;
 
-        case PDNegotiationState::WaitingCapabilities:
-            if (_husb.getPDResponse() == SUCCESS) {
-                if (selectAndRequestBestPdo()) {
+        case PDNegotiationState::AttachSettle:
+            if ((status & NEWPDO_MSK) || (millis() - _stateEnteredAt >= kAttachSettleMs)) {
+                _pd.refreshPdoTable();
+                if (requestBestPdo()) {
                     _state          = PDNegotiationState::Requesting;
                     _stateEnteredAt = millis();
-                } else {
-                    // No PDO above 5 V available; the default 5 V contract is
-                    // already active.
-                    _voltage      = 5.0f;
-                    _current      = _ampsFromCurrentSetting(_husb.getPDSrcCurrent());
-                    _state        = PDNegotiationState::Ready;
-                    _justAttached = true;
                 }
-            } else if (millis() - _stateEnteredAt >= kNegotiationTimeoutMs) {
-                Serial.println("[PD] Capabilities not ready; retrying...");
-                requestCapabilities();
+                // else: no eligible fixed PDO yet; keep retrying from AttachSettle.
             }
             break;
 
         case PDNegotiationState::Requesting: {
-            const float activeVoltage = _voltageFromActiveSetting(_husb.getPDSrcVoltage());
-            if (activeVoltage <= 0.0f) {
-                // An invalid enum usually means a transient I2C read failure.
-                // Keep waiting instead of treating it as a real contract change.
-                break;
-            }
+            const bool msgSuccess     = (_pd.readMsgResult() == 1);
+            const float activeVoltage = _pd.readVREQ() / 1000.0f;
+            const bool voltageMatched = (_voltage > 0.0f) && (fabsf(activeVoltage - _voltage) <= 0.5f);
 
-            if (activeVoltage == _requestedVoltage) {
-                _voltage      = activeVoltage;
-                _current      = _ampsFromCurrentSetting(_husb.getPDSrcCurrent());
-                _state        = PDNegotiationState::Ready;
+            if ((status & READY_MSK) || msgSuccess || voltageMatched) {
+                _state = PDNegotiationState::Ready;
+                _pd.setOutput(1);
                 _justAttached = true;
-                Serial.printf("[PD] Contract active: %.0fV %.2fA %.1fW\n",
+                Serial.printf("[PD] Contract active: %.1fV %.2fA %.1fW\n",
                               _voltage, _current, _voltage * _current);
             } else if (millis() - _stateEnteredAt >= kNegotiationTimeoutMs) {
                 Serial.println("[PD] Contract request timed out; retrying...");
-                requestCapabilities();
+                _state          = PDNegotiationState::AttachSettle;
+                _stateEnteredAt = millis();
             }
             break;
         }
 
         case PDNegotiationState::Ready: {
-            const float activeVoltage = _voltageFromActiveSetting(_husb.getPDSrcVoltage());
-            if (activeVoltage <= 0.0f) {
-                // Do not renegotiate on one invalid HUSB238 register read.
+            const bool dueForRecheck = (status & NEWPDO_MSK) ||
+                (millis() - _stateEnteredAt >= kProfileRecheckMs);
+            if (!dueForRecheck) {
                 break;
             }
+            _stateEnteredAt = millis();
+            _pd.refreshPdoTable();
 
-            if (activeVoltage != _voltage) {
-                Serial.printf("[PD] Contract changed: %.0fV -> %.0fV; re-negotiating.\n",
-                              _voltage, activeVoltage);
+            const uint8_t bestPdo = findBestFixedPdo();
+            if (bestPdo != 0 && bestPdo != _activePdoIndex) {
+                Serial.printf("[PD] Source profile changed (%.1fV -> %.1fV); re-negotiating.\n",
+                              _voltage, _pd.getPdoVoltageV(bestPdo));
                 _voltageJumped = true;
-                requestCapabilities();
+                _pd.setOutput(0);
+                if (requestBestPdo()) {
+                    _state          = PDNegotiationState::Requesting;
+                    _stateEnteredAt = millis();
+                }
             }
             break;
         }
     }
 }
 
-void PDManager::requestCapabilities() {
-    _state          = PDNegotiationState::WaitingCapabilities;
-    _stateEnteredAt = millis();
-}
-
-bool PDManager::selectAndRequestBestPdo() {
-    static constexpr struct { HUSB238_PDSelection sel; float volts; } kPDOs[] = {
-        {PD_SRC_20V, 20.f}, {PD_SRC_18V, 18.f}, {PD_SRC_15V, 15.f},
-        {PD_SRC_12V, 12.f}, {PD_SRC_9V, 9.f},   {PD_SRC_5V, 5.f},
-    };
-
-    Serial.println("[PD] Available source profiles:");
-
-    for (const auto &pdo : kPDOs) {
-        const bool available = _husb.isVoltageDetected(pdo.sel);
-        if (!available) {
-            continue;
-        }
-
-        const float amps = _ampsFromCurrentSetting(_husb.currentDetected(pdo.sel));
-        Serial.printf("[PD] %.0fV %.2fA %.1fW\n", pdo.volts, amps, pdo.volts * amps);
-
-        if (pdo.volts <= 5.0f) {
-            // Already the default contract; nothing to request.
-            return false;
-        }
-
-        _husb.selectPD(pdo.sel);
-        _husb.requestPD();
-        _requestedVoltage = pdo.volts;
-        Serial.printf("[PD] Requested %.0fV, response=%u, selected=%u\n",
-                  _requestedVoltage,
-                  static_cast<unsigned>(_husb.getPDResponse()),
-                  static_cast<unsigned>(_husb.getSelectedPD()));
-        return true;
+bool PDManager::requestBestPdo() {
+    const uint8_t bestPdo = findBestFixedPdo();
+    if (bestPdo == 0) {
+        return false;
     }
 
-    return false;
+    const float voltage    = _pd.getPdoVoltageV(bestPdo);
+    const float maxCurrent = _pd.getPdoMaxCurrentA(bestPdo);
+
+    if (!_pd.requestFixedPDO(bestPdo)) {
+        return false;
+    }
+
+    _activePdoIndex = bestPdo;
+    _voltage        = voltage;
+    _current        = maxCurrent;
+    return true;
+}
+
+uint8_t PDManager::findBestFixedPdo() const {
+    uint8_t bestPdo     = 0; // 1-based PDO number, 0 = none found
+    float   bestVoltageV = -1.0f;
+
+    for (int pdo = 1; pdo <= MAX_PDO_ENTRIES; ++pdo) {
+        const float voltageV = _pd.getPdoVoltageV(pdo);
+        if (voltageV <= 0.0f || voltageV > kMaxRequestVoltageV) {
+            continue;
+        }
+        if (voltageV > bestVoltageV) {
+            bestVoltageV = voltageV;
+            bestPdo      = static_cast<uint8_t>(pdo);
+        }
+    }
+    return bestPdo;
 }
 
 bool PDManager::isAttached() const {
@@ -161,15 +172,15 @@ bool PDManager::isReady() const {
     return _state == PDNegotiationState::Ready;
 }
 
-bool PDManager::justAttached() {
+bool PDManager::justAttached() const {
     return _justAttached;
 }
 
-bool PDManager::justDetached() {
+bool PDManager::justDetached() const {
     return _justDetached;
 }
 
-bool PDManager::voltageJumped() {
+bool PDManager::voltageJumped() const {
     return _voltageJumped;
 }
 
@@ -185,36 +196,12 @@ float PDManager::getWattage() const {
     return _voltage * _current;
 }
 
-float PDManager::_voltageFromActiveSetting(HUSB238_VoltageSetting vs) {
-    switch (vs) {
-        case PD_5V:  return 5.0f;
-        case PD_9V:  return 9.0f;
-        case PD_12V: return 12.0f;
-        case PD_15V: return 15.0f;
-        case PD_18V: return 18.0f;
-        case PD_20V: return 20.0f;
-        default:     return 0.0f;
+void PDManager::shutdown() {
+    if (_shutdownLatched) {
+        return;
     }
-}
 
-float PDManager::_ampsFromCurrentSetting(HUSB238_CurrentSetting cur) {
-    switch (cur) {
-        case CURRENT_0_5_A:  return 0.5f;
-        case CURRENT_0_7_A:  return 0.7f;
-        case CURRENT_1_0_A:  return 1.0f;
-        case CURRENT_1_25_A: return 1.25f;
-        case CURRENT_1_5_A:  return 1.5f;
-        case CURRENT_1_75_A: return 1.75f;
-        case CURRENT_2_0_A:  return 2.0f;
-        case CURRENT_2_25_A: return 2.25f;
-        case CURRENT_2_50_A: return 2.5f;
-        case CURRENT_2_75_A: return 2.75f;
-        case CURRENT_3_0_A:  return 3.0f;
-        case CURRENT_3_25_A: return 3.25f;
-        case CURRENT_3_5_A:  return 3.5f;
-        case CURRENT_4_0_A:  return 4.0f;
-        case CURRENT_4_5_A:  return 4.5f;
-        case CURRENT_5_0_A:  return 5.0f;
-        default:             return 0.0f;
-    }
+    _shutdownLatched = true;
+    Serial.println("[PD] Shutdown: switching VBUS off");
+    _pd.setOutput(0);
 }
