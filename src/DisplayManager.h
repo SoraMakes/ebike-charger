@@ -21,7 +21,7 @@ public:
     void showMessage(const char *msg);
 
     /// Refreshes the displayed metrics. Call periodically (e.g. every 500 ms).
-    void update(const PDManager &pd, const ThermalManager &thermal,
+    void update(PDManager &pd, const ThermalManager &thermal,
                 const CurrentControl &current, const VoltageMonitor &voltage,
                 const PowerMonitor &power, const EfficiencyEstimator &efficiency);
 

@@ -40,6 +40,13 @@ public:
     /// Returns the short reason for the permanent shutdown.
     const char *getShutdownReason() const;
 
+    /// Returns the digipot wiper step last written (-1 before the first write).
+    int16_t getDigipotStep() const { return _lastDigipotStep; }
+
+    /// Returns the internal power level (-1 = disabled) and its ramp target.
+    int16_t getPowerLevel() const { return _powerLevel; }
+    int16_t getTargetLevel() const { return _targetLevel; }
+
     /// Tests the regulator from the safe level through the requested digipot level.
     /// @param maxLevel Highest digipot level to test.
     void test(uint8_t maxLevel);

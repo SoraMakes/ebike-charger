@@ -11,7 +11,7 @@ static constexpr float kAdcVoltageFullScaleV = 50.67f;
 static constexpr float kAdcResolution       = 4096.0f;
 
 // Endpoint correction: +0.3 V at 30 V and -0.3 V at 41 V.
-static constexpr float kVoltageCalibrationGain   = 1.01854f;
+static constexpr float kVoltageCalibrationGain   = 0.854f;
 static constexpr float kVoltageCalibrationOffset = 1.73636f;
 
 // ESP8266 (D1 mini) original values, kept for reference:
@@ -40,7 +40,17 @@ void VoltageMonitor::update() {
     _rawReading = readings[1];
 
     const float dividerVoltageV = static_cast<float>(_rawReading) * (kAdcVoltageFullScaleV / kAdcResolution);
-    const float calibratedVoltageV = dividerVoltageV * kVoltageCalibrationGain + kVoltageCalibrationOffset;
+
+    // The gain/offset pair is a straight-line fit taken between 30 V and 41 V.
+    // Extrapolating it down to zero is invalid: at raw 0 it reports +1.74 V, so
+    // a completely dead output never satisfies the `outputVoltageV <= 0` guard
+    // in CurrentControl::update(). Worse, the surviving 1.74 V is then used as
+    // the divisor in `targetAmps = limitWatts / outputVoltageV`, which pins the
+    // demand at the 3 A ceiling exactly when the rail is down or still ramping.
+    // Below the fit's range the only honest answer is zero.
+    const float calibratedVoltageV = (dividerVoltageV < kCalibrationValidFromV)
+        ? 0.0f
+        : dividerVoltageV * kVoltageCalibrationGain + kVoltageCalibrationOffset;
 
     // If voltage drops below, or was previously below, the reset threshold,
     // start the EMA again from the current measurement.

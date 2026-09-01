@@ -1,5 +1,6 @@
 #include "CurrentControl.h"
 #include "PDManager.h"
+#include "DiagLog.h"
 
 #include <math.h>
 
@@ -27,6 +28,21 @@ void CurrentControl::begin(TwoWire &wire, VoltageMonitor &voltageMonitor, PDMana
     _voltageMonitor = &voltageMonitor;
     _pdManager = &pdManager;
     _lastDigipotStep = -1;
+
+    // Read the wiper BEFORE overwriting it. The MCP4018's wiper is volatile and
+    // is documented to power up at mid-scale, so after a brownout the regulator
+    // has been commanded at roughly half of kMaxAllowedOutputAmps for the whole
+    // boot. Logging the value we find turns that from a datasheet claim into a
+    // measurement on this board: a value near 64 on a reboot confirms it.
+    _wire->requestFrom(static_cast<uint8_t>(kMCP4018Address), static_cast<uint8_t>(1));
+    if (_wire->available()) {
+        const uint8_t wiperAtBoot = static_cast<uint8_t>(_wire->read());
+        DiagLog::event("digipot at boot: step %u (~%.2fA)", wiperAtBoot,
+                       kCurrentAtStepZeroA + wiperAtBoot * kCurrentPerStepA);
+    } else {
+        DiagLog::event("digipot at boot: no response from 0x%02X", kMCP4018Address);
+    }
+
     safe();
 }
 
@@ -145,6 +161,11 @@ void CurrentControl::update(float limitWatts) {
 void CurrentControl::safe() {
     _powerLevel = -1;
     _targetLevel = -1;
+    // Restart the ramp clock. Without this, _lastIncreaseAt keeps ageing while
+    // the regulator is held safe, so the first update() after the gate reopens
+    // finds the interval already elapsed and jumps a full accelerated step
+    // immediately instead of ramping from zero.
+    _lastIncreaseAt = millis();
     writeDigipot(0);
 }
 
