@@ -27,7 +27,11 @@ bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin, CurrentControl &curren
     // and must not overwrite the peripheral output routing.
     ledcAttachPin(_fanPin, kFanLedcChannel);
 
-    applyFanPwm(kFanFullDuty);
+    // Start at the idle duty, not 100%. Full duty here put the fan's inrush on
+    // the shared 5 V rail during exactly the window in which the regulator's
+    // input caps are charging and the ESP is most vulnerable to a brownout.
+    // update() raises the duty within a second if the temperature warrants it.
+    applyFanPwm(kFanMinimumDuty);
     _sensorFault = !_sensor.begin(0x76);
     if (_sensorFault) {
         enterShutdown("Temp failed");

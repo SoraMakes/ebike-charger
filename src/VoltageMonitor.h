@@ -22,6 +22,9 @@ public:
 private:
     static constexpr float kEmaAlpha = 0.1f; // 100 ms sampling interval
     static constexpr float kEmaResetVoltageV = 5.5f;
+    // Below this raw divider voltage the calibration fit is out of range and
+    // the reading is reported as 0 V rather than as its +1.74 V intercept.
+    static constexpr float kCalibrationValidFromV = 2.0f;
     // Number of consecutive over-limit readings required before a shutdown is latched.
     static constexpr uint8_t kOvervoltageRequiredSamples = 20;
 

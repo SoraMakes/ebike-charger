@@ -37,7 +37,7 @@ void DisplayManager::showMessage(const char *msg) {
     }
 }
 
-void DisplayManager::update(const PDManager &pd, const ThermalManager &thermal,
+void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
                             const CurrentControl &current, const VoltageMonitor &voltage,
                             const PowerMonitor &power, const EfficiencyEstimator &efficiency) {
     const float pdVoltageV = pd.getVoltage();
@@ -54,22 +54,35 @@ void DisplayManager::update(const PDManager &pd, const ThermalManager &thermal,
     _tft.setTextSize(2);
 
     // Negotiated PD profile with measured input voltage/current in braces.
-    _tft.drawString("PD " + String(pdVoltageV, 0) + "V/" + String(pdCurrentA, 0) + "A " +
+    // Current shown with 1 decimal: a 1.5A PDO must not round up to "2A".
+    _tft.drawString("I " + String(pdVoltageV, 0) + "V/" + String(pdCurrentA, 1) + "A " +
                      String(measuredVoltageV, 1) + "/" + String(measuredCurrentA, 1), 5, 5);
 
     // Output voltage + current, and max power at current voltage + target current.
-    _tft.drawString("Out: " + String(outputVoltageV, 1) + "V " + String(currentLimitA, 2) + "A", 5, 35);
-    _tft.drawString("Max: " + String(maxPowerW, 1) + "W", 5, 65);
+    _tft.drawString("Out: " + String(outputVoltageV, 1) + "V " + String(currentLimitA, 2) + "A ", 5, 35);
 
-    // Temperature.
-    _tft.drawString("Temp: " + String(tempC, 1) + " C", 5, 95);
+    // The measured AP33772S VOUT voltage - the regulator's INPUT. Shown as a
+    // number, not a boolean: the old "(e)/(d)" flag only tested VOUT >= 1V, so
+    // a contract that collapsed from 20V back to 5V still read as "enabled".
+    // Comparing this against the contract voltage on the line above is what
+    // reveals a dead contract.
+    _tft.drawString("Max: " + String(maxPowerW, 1) + "W  in " +
+                     String(pd.getVoutVoltageV(), 1) + "V", 5, 65);
 
-    // VR efficiency estimate.
-    _tft.drawString("Eff: " + String(efficiencyPct, 0) + "%", 5, 120);
+    // Temperature and VR efficiency estimate on one line.
+    _tft.drawString("Temp: " + String(tempC, 1) + "C " + String(efficiencyPct, 0) + "%", 5, 95);
 
+    // Bottom line, in priority order:
+    //  1. an app-triggered shutdown (overvoltage / overtemperature), or
+    //  2. any AP33772S protection that has tripped since boot. STATUS is
+    //     read-clear, so this comes from PDManager's sticky latch - without it
+    //     a chip-side fault leaves no trace anywhere and the line stayed blank,
+    //     which is exactly why no reason was ever displayed for this failure.
     if (current.isShutdownLatched()) {
-        _tft.drawString("STOP: " + String(current.getShutdownReason()), 5, 145);
+        _tft.drawString("STOP: " + String(current.getShutdownReason()) + "      ", 5, 118);
+    } else if (pd.hasChipFault()) {
+        _tft.drawString("PD FAULT: " + String(pd.getFaultText()) + "     ", 5, 118);
     } else {
-        _tft.drawString("                    ", 5, 145);
+        _tft.drawString("                    ", 5, 118);
     }
 }
