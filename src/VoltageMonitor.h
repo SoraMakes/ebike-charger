@@ -16,9 +16,6 @@ public:
     /// Returns the most recently measured, filtered voltage.
     float getVoltage() const;
 
-    /// Returns the most recently sampled ADC count.
-    int getRawReading() const;
-
 private:
     static constexpr float kEmaAlpha = 0.1f; // 100 ms sampling interval
     static constexpr float kEmaResetVoltageV = 5.5f;

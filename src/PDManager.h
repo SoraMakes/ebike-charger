@@ -26,11 +26,29 @@ public:
     /// Advances the negotiation state machine. Call this periodically.
     void update();
 
+    /// Supplies an independently measured voltage for the rail the source is
+    /// delivering (the INA238 bus voltage). Call this before every update().
+    ///
+    /// This exists because register 0x11 cannot be used for it on this board -
+    /// see the note on getVoutVoltageV(). Every contract decision that used to
+    /// read 0x11 now reads this instead. A value below kRailValidMinV, or a
+    /// non-finite one, is treated as "no measurement available", and the checks
+    /// that depend on it are skipped rather than failed: a dead sensor must not
+    /// be able to reject a good contract or tear down a live one.
+    void setMeasuredRailVoltage(float volts);
+
     /// Reports whether a USB-PD source is currently attached (may still be negotiating).
     bool isAttached() const;
 
     /// Reports whether a contract is active and ready for use.
     bool isReady() const;
+
+    /// True while a source is attached but no contract exists yet and the
+    /// firmware is still actively retrying to force one (AttachSettle, retries
+    /// not exhausted). Used by the keep-alive load: an impatient source
+    /// (powerbank) auto-shuts-down on low load, so the fan is run at full speed
+    /// during this window to draw extra current and buy the retries time.
+    bool isAttachRetrying() const;
 
     /// True once when a source becomes ready (initial contract or after re-negotiation).
     bool justAttached() const;
@@ -48,22 +66,19 @@ public:
     /// Returns the current limit of the active source contract in amps.
     float getCurrent() const;
 
-    /// Returns the power limit of the active source contract in watts.
-    float getWattage() const;
-
-    /// Reports whether the RotoPD Pro's VOUT MOS switch is actually conducting.
-    /// Based on the measured VOUT voltage (>= 1V), NOT the SYSTEM register:
-    /// the chip's own protections (UVP/OVP/OCP/OTP) turn VOUT off internally
-    /// without changing the SYSTEM register, so only the measured voltage is
-    /// a reliable indicator of the real output state.
-    bool isOutputEnabled();
-
-    /// Returns the AP33772S VOUT voltage in volts (register 0x11).
+    /// Returns register 0x11 in volts.
     ///
-    /// NOTE: VOUT is the node feeding the voltage regulator's INPUT, not the
-    /// charger's 42 V output. Reading ~5 V here while the contract claims 20 V
-    /// means the contract died and the source fell back to vSafe5V, which the
-    /// old boolean isOutputEnabled() reported as "enabled" either way.
+    /// DO NOT USE THIS FOR ANY DECISION. The datasheet defines 0x11 as VOUT at
+    /// 80 mV/LSB, but on this board it does not track the PD rail: it sits at
+    /// ~4.96 V while a 20 V contract is active and the INA238 reads 20.12 V on
+    /// the same rail, and it reads 4.7 V (i.e. dropout) from a 5 V-only source.
+    /// Whatever node it is on behaves like the RotoPD Pro's always-on 5 V rail.
+    ///
+    /// The consequence is that every threshold built on it was a constant:
+    /// "VOUT >= 0.75 x contract" was FALSE for any contract above 6.6 V, so no
+    /// contract above that could ever be accepted or held, on any supply, with
+    /// any cable. Kept only so the value stays visible in [PDDIAG] and on the
+    /// screen as evidence; use setMeasuredRailVoltage().
     float getVoutVoltageV();
 
     /// Permanently switches off the RotoPD Pro's VBUS switch and prevents
@@ -75,31 +90,38 @@ public:
     /// read-clear and belongs to update()), so this is safe to call as often
     /// as you like.
     void logDiagnostics(float inaVoltageV, float inaCurrentA,
-                        float outputVoltageV, int digipotStep);
+                        float outputVoltageV, int digipotStep,
+                        const char *inaAlertText = "");
 
     /// Every STATUS bit observed since boot. STATUS is read-clear, so bits are
     /// OR-accumulated as they are polled; without this the evidence of a
     /// protection trip is destroyed by the very read that observes it.
-    uint8_t getStickyStatus() const { return _statusSticky; }
-
-    /// Short text naming the AP33772S protections that have tripped since
-    /// boot ("OCP", "OVP+OTP", ...), or "" when none have.
     const char *getFaultText() const;
 
     /// True once any of UVP/OVP/OCP/OTP has ever been reported by the chip.
     bool hasChipFault() const;
 
-    /// Current negotiation state, for display and logging.
-    PDNegotiationState getState() const { return _state; }
-
 private:
     /// Highest fixed-PDO voltage we are willing to request.
     static constexpr float kMaxRequestVoltageV = 28.0f;
+
+    /// Below this, a rail measurement is treated as absent rather than as a
+    /// dead rail. A source is attached whenever the state machine is past
+    /// Disconnected, so the rail is at least vSafe5V; anything under 3 V means
+    /// the sensor is missing or failed, not that the rail collapsed.
+    static constexpr float kRailValidMinV = 3.0f;
 
     /// Lowest advertised PDO current worth requesting. The AP33772S encodes
     /// CURRENT_MAX in 4-bit buckets whose lowest, code 0, means "less than
     /// 1.24 A" - too little to charge with, and impossible to bound safely.
     static constexpr float kMinUsablePdoCurrentA = 1.25f;
+
+    /// How often to poll/refresh the PDO table while in AttachSettle.
+    static constexpr uint32_t kAttachSettlePollMs       = 150;
+    /// How often to fire a raw PD_REQMSG re-request while in AttachSettle with
+    /// no cached capabilities, to prompt the chip to issue Get_Source_Cap to
+    /// the source. The AP33772S has no direct Get_Source_Cap command.
+    static constexpr uint32_t kCapsReRequestMs          = 300;
 
     /// Requests the best eligible fixed PDO found in the cached table.
     /// @return true if a request was sent.
@@ -134,7 +156,10 @@ private:
     PDNegotiationState _state          = PDNegotiationState::Disconnected;
     uint32_t           _stateEnteredAt = 0;
     uint32_t           _lastStatusPollMs = 0;
+    uint32_t           _lastPdoPollMs  = 0;
+    uint32_t           _lastCapsReqMs  = 0; // last raw PD_REQMSG re-request time
     uint32_t           _absentSinceMs  = 0; // 0 = source present, else millis() of first absence
+    uint8_t            _lastOpMode     = 0xFF; // last OPMODE read, for transition logging
 
     // Contract liveness. VOUT is compared against the contract voltage; when it
     // falls away the contract is dead even though the chip still reports a
@@ -160,6 +185,12 @@ private:
 
     uint8_t _statusLast   = 0; // STATUS as of the most recent poll
     uint8_t _statusSticky = 0; // OR of every STATUS bit ever seen
-    uint8_t _lastVoutBand = 0xFF; // 0 = <1V, 1 = ~5V, 2 = high, 0xFF = unknown
+    uint8_t _lastRailBand = 0xFF; // 0 = <1V, 1 = ~5V, 2 = high, 0xFF = unknown
+
+    // Externally measured source rail voltage (INA238). See
+    // setMeasuredRailVoltage(); replaces every former use of register 0x11.
+    float _railVoltageV = 0.0f;
+    bool  _railValid    = false;
+    bool  _railWasValid = false; // for logging validity transitions once
 };
 

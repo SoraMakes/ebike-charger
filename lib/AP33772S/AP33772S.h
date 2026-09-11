@@ -207,6 +207,11 @@ public:
   // PDO table access; all indices are 1-based (1..13) as in USB-PD RDOs
   void refreshPdoTable();
   bool requestFixedPDO(uint8_t pdoIndex);
+  /// Writes PD_REQMSG directly without checking PDO validity. Firing a request
+  /// even when no capabilities are cached may prompt the chip to issue
+  /// Get_Source_Cap to the source to obtain them. Used by the repeated
+  /// re-request test.
+  bool requestPdoRaw(uint8_t pdoIndex, uint8_t currentSel);
   bool isFixedPdoAt(int pdoIndex) const;
   float getPdoVoltageV(int pdoIndex) const;
   float getPdoMaxCurrentA(int pdoIndex) const;

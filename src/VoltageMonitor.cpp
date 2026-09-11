@@ -10,8 +10,8 @@ static constexpr float kShutdownVoltageV = 42.5f;
 static constexpr float kAdcVoltageFullScaleV = 50.67f;
 static constexpr float kAdcResolution       = 4096.0f;
 
-// Endpoint correction: +0.3 V at 30 V and -0.3 V at 41 V.
-static constexpr float kVoltageCalibrationGain   = 0.854f;
+// Actual readings on gen3: 3535:40.6V
+static constexpr float kVoltageCalibrationGain   = .854f;
 static constexpr float kVoltageCalibrationOffset = 1.73636f;
 
 // ESP8266 (D1 mini) original values, kept for reference:
@@ -71,8 +71,4 @@ void VoltageMonitor::update() {
 
 float VoltageMonitor::getVoltage() const {
     return _voltageV;
-}
-
-int VoltageMonitor::getRawReading() const {
-    return _rawReading;
 }

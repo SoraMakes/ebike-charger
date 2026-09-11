@@ -29,6 +29,14 @@ public:
     /// Returns true after an overtemperature or sensor-fault shutdown.
     bool isShutdownLatched() const;
 
+    /// While a source is attached but no PD contract exists yet, the fan is run
+    /// at full speed as a keep-alive load. The fan is the largest controllable
+    /// load on the 5 V rail, and drawing extra current stops an impatient
+    /// powerbank from auto-shutting-down during the AP33772S's slow startup and
+    /// the firmware's re-attach retries. Cleared automatically once a contract
+    /// exists or the retries are exhausted (see PDManager::isAttachRetrying).
+    void setKeepAlive(bool active);
+
 private:
     static constexpr uint16_t kPwmRange = 1023;
     static constexpr uint32_t kFanPwmFrequencyHz = 16000;
@@ -39,6 +47,7 @@ private:
     float _outputPowerLimitW = 0.0f;
     bool _sensorFault = true;
     bool _shutdownLatched = false;
+    bool _keepAlive = false;
     CurrentControl *_currentControl = nullptr;
 
     void applyFanPwm(uint16_t duty) const;

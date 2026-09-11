@@ -56,6 +56,10 @@ bool AP33772S::begin()
     if (_i2cPort->endTransmission() != 0) {
         return false;
     }
+    // Insufficient delay after I2C init before the capability request has
+    // caused "no PDOs read" symptoms on other AP33772S boards. Give the chip
+    // time to settle before reading the PDO table.
+    delay(1000);
     refreshPdoTable();
     return true;
 }
@@ -109,6 +113,16 @@ bool AP33772S::requestFixedPDO(uint8_t pdoIndex)
     RDO_DATA_T rdo{};
     rdo.REQMSG_Fields.PDO_INDEX   = pdoIndex;
     rdo.REQMSG_Fields.CURRENT_SEL = SRC_SPRandEPRpdoArray[pdoIndex - 1].fixed.current_max;
+    writeBuf[0] = rdo.byte0;
+    writeBuf[1] = rdo.byte1;
+    return i2c_write(AP33772S_ADDRESS, CMD_PD_REQMSG, 2);
+}
+
+bool AP33772S::requestPdoRaw(uint8_t pdoIndex, uint8_t currentSel)
+{
+    RDO_DATA_T rdo{};
+    rdo.REQMSG_Fields.PDO_INDEX   = pdoIndex;
+    rdo.REQMSG_Fields.CURRENT_SEL = currentSel;
     writeBuf[0] = rdo.byte0;
     writeBuf[1] = rdo.byte1;
     return i2c_write(AP33772S_ADDRESS, CMD_PD_REQMSG, 2);
