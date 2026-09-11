@@ -43,18 +43,6 @@ public:
     /// Returns the digipot wiper step last written (-1 before the first write).
     int16_t getDigipotStep() const { return _lastDigipotStep; }
 
-    /// Returns the internal power level (-1 = disabled) and its ramp target.
-    int16_t getPowerLevel() const { return _powerLevel; }
-    int16_t getTargetLevel() const { return _targetLevel; }
-
-    /// Tests the regulator from the safe level through the requested digipot level.
-    /// @param maxLevel Highest digipot level to test.
-    void test(uint8_t maxLevel);
-
-    /// Tests the regulator at a fixed digipot level.
-    /// @param level Digipot level to test.
-    void test_set_fixed(uint8_t level);
-
 private:
     TwoWire *_wire         = nullptr;
     VoltageMonitor *_voltageMonitor = nullptr;
@@ -64,7 +52,6 @@ private:
     int16_t  _targetLevel  = -1;
     int16_t  _lastDigipotStep = -1;
     uint32_t _lastIncreaseAt = 0;
-    uint32_t _lastVoltageLogAt = 0;
     bool     _shutdownLatched = false;
     char     _shutdownReason[17] = "";
 

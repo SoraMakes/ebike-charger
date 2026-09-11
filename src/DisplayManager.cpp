@@ -5,6 +5,7 @@
 #include "VoltageMonitor.h"
 #include "PowerMonitor.h"
 #include "EfficiencyEstimator.h"
+#include "DiagLog.h"
 
 void DisplayManager::begin() {
     _tft.init();
@@ -35,6 +36,16 @@ void DisplayManager::showMessage(const char *msg) {
             lineStart = p + 1;
         }
     }
+}
+
+void DisplayManager::showBootBanner(uint32_t bootCount, const char *resetReason) {
+    _tft.fillScreen(TFT_BLACK);
+    _tft.setTextSize(3);
+    _tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    _tft.drawString("boot #" + String(bootCount), 5, 20);
+    _tft.setTextColor(TFT_RED, TFT_BLACK);
+    _tft.drawString(String(resetReason), 5, 60);
+    _tft.setTextSize(2);
 }
 
 void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
@@ -73,16 +84,31 @@ void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
     _tft.drawString("Temp: " + String(tempC, 1) + "C " + String(efficiencyPct, 0) + "%", 5, 95);
 
     // Bottom line, in priority order:
-    //  1. an app-triggered shutdown (overvoltage / overtemperature), or
-    //  2. any AP33772S protection that has tripped since boot. STATUS is
-    //     read-clear, so this comes from PDManager's sticky latch - without it
-    //     a chip-side fault leaves no trace anywhere and the line stayed blank,
-    //     which is exactly why no reason was ever displayed for this failure.
+    //  1. an app-triggered shutdown (overvoltage / overtemperature),
+    //  2. any AP33772S protection that has tripped since boot, or
+    //  3. any INA238 hardware alert (circuit breaker trip) since boot.
     if (current.isShutdownLatched()) {
         _tft.drawString("STOP: " + String(current.getShutdownReason()) + "      ", 5, 118);
     } else if (pd.hasChipFault()) {
         _tft.drawString("PD FAULT: " + String(pd.getFaultText()) + "     ", 5, 118);
+    } else if (power.hasAlert()) {
+        _tft.drawString("INA FAULT: " + String(power.getAlertText()) + "    ", 5, 118);
     } else {
-        _tft.drawString("                    ", 5, 118);
+        // With no fault to report, keep the boot counter and reset reason
+        // visible. On a board that reboots faster than a serial monitor can
+        // attach, this line is the only place the reason is ever readable.
+        _tft.drawString("b" + String(DiagLog::bootCount()) + " " +
+                        String(DiagLog::resetReasonText()) + "          ", 5, 118);
     }
+
+    // Power-on timer, e.g. "12.3s". Drawn right-aligned on the bottom line so
+    // it is always visible, even when a fault message occupies the left side.
+    // The ST7789 holds its framebuffer for a few hundred ms after the ESP
+    // dies, so this is what tells you exactly when it crashed. Refreshed by
+    // the 100 ms display task.
+    char uptime[16];
+    snprintf(uptime, sizeof(uptime), "%.1fs", millis() / 1000.0f);
+    _tft.setTextDatum(TR_DATUM);
+    _tft.drawString(String(uptime), 235, 118);
+    _tft.setTextDatum(TL_DATUM);
 }

@@ -27,10 +27,6 @@ bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin, CurrentControl &curren
     // and must not overwrite the peripheral output routing.
     ledcAttachPin(_fanPin, kFanLedcChannel);
 
-    // Start at the idle duty, not 100%. Full duty here put the fan's inrush on
-    // the shared 5 V rail during exactly the window in which the regulator's
-    // input caps are charging and the ESP is most vulnerable to a brownout.
-    // update() raises the duty within a second if the temperature warrants it.
     applyFanPwm(kFanMinimumDuty);
     _sensorFault = !_sensor.begin(0x76);
     if (_sensorFault) {
@@ -62,7 +58,9 @@ void ThermalManager::update() {
     _temperatureC = temperature;
 
     uint16_t fanDuty = kFanMinimumDuty;
-    if (_temperatureC >= kFanFullTemperatureC) {
+    if (_keepAlive) {
+        fanDuty = kFanFullDuty;
+    } else if (_temperatureC >= kFanFullTemperatureC) {
         fanDuty = kFanFullDuty;
     } else if (_temperatureC > kFanMinimumTemperatureC) {
         const float ratio = (_temperatureC - kFanMinimumTemperatureC) / (kFanFullTemperatureC - kFanMinimumTemperatureC);
@@ -97,6 +95,10 @@ bool ThermalManager::hasSensorFault() const {
 
 bool ThermalManager::isShutdownLatched() const {
     return _shutdownLatched;
+}
+
+void ThermalManager::setKeepAlive(bool active) {
+    _keepAlive = active;
 }
 
 void ThermalManager::applyFanPwm(uint16_t duty) const {

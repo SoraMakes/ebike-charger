@@ -9,8 +9,6 @@
 // unmasked; the mask only gates the physical INT pin.
 static constexpr uint8_t kFaultMask = UVP_MSK | OVP_MSK | OCP_MSK | OTP_MSK;
 
-// Delay after attach detection before the controller's profile list is trusted.
-static constexpr uint32_t kAttachSettleMs       = 300;
 // How long to wait for a requested contract to become active before retrying.
 static constexpr uint32_t kNegotiationTimeoutMs = 2000;
 // While Ready, how often to re-check the source's profile list for changes
@@ -70,8 +68,6 @@ void PDManager::applyStartupConfig() {
     if (_configured) {
         return;
     }
-    // TODO: i dont want to disable them!
-    // TODO: i want actually usefull setOutput handling
     // UVP must be disabled for the RotoPD Pro (avoids UVP hard resets).
     // The other AP33772S protections stay at their power-on defaults.
     _pd.clearConfig(AP33772_CONFIG::UVP_EN);
@@ -79,14 +75,18 @@ void PDManager::applyStartupConfig() {
     // UVP/OVP/OCP/OTP masked meant a protection trip never raised INT and was
     // only ever seen (and destroyed) by the periodic STATUS poll.
     _pd.setInterruptRegisterMask(STARTED_MSK | READY_MSK | NEWPDO_MSK | kFaultMask);
-    // Turn VOUT ON now, at 5V, BEFORE the 20V request (matches the official
-    // CentyLab example flow: setOutput(1) right after init). The VR input caps
-    // charge gently at 5V, then VOUT follows VBUS as it ramps to 20V. Turning
-    // VOUT on AFTER the 20V contract (the old approach) suddenly switched 20V
-    // onto empty caps -> inrush -> crash. Auto control (VOUTCTL=0) did not
-    // turn VOUT on reliably, so force-ON early is the working approach.
-    _pd.setOutput(1);
     _configured = true;
+}
+
+void PDManager::setMeasuredRailVoltage(float volts) {
+    _railVoltageV = volts;
+    _railValid    = isfinite(volts) && (volts >= kRailValidMinV);
+
+    if (_railValid != _railWasValid) {
+        DiagLog::event("INA VBUS measurement %s (%.2fV)",
+                       _railValid ? "available" : "LOST", volts);
+        _railWasValid = _railValid;
+    }
 }
 
 // The single choke point for STATUS. The register is read-clear: whatever this
@@ -149,7 +149,8 @@ bool PDManager::hasChipFault() const {
 // apart after the fact. Deliberately does NOT read STATUS (read-clear, owned by
 // update()); it prints the sticky latch instead.
 void PDManager::logDiagnostics(float inaVoltageV, float inaCurrentA,
-                               float outputVoltageV, int digipotStep) {
+                               float outputVoltageV, int digipotStep,
+                               const char *inaAlertText) {
     static const char *kStateNames[] = {"DISC", "SETTLE", "REQ", "READY"};
 
     uint8_t config = 0, mask = 0, system = 0;
@@ -168,29 +169,38 @@ void PDManager::logDiagnostics(float inaVoltageV, float inaCurrentA,
     // VOUTCTL is SYSTEM bits 1:0 - 0 auto, 1 force OFF, 2 force ON.
     const uint8_t voutCtl = static_cast<uint8_t>(system & 0x03);
 
-    // Classify VOUT into three bands and log the transitions. This is the
-    // measurement that separates the two candidate failures: band 0 means the
-    // VOUT MOS opened, band 1 means the contract collapsed back to ~5V while
-    // the MOS stayed closed. Both look identical on the "(e)" display flag.
-    const uint8_t band = (voutMv < 1000) ? 0 : (voutMv < 7000 ? 1 : 2);
-    if (band != _lastVoutBand) {
-        static const char *kBandNames[] = {"OFF(<1V)", "LOW(~5V)", "HIGH"};
-        DiagLog::event("VOUT %s -> %s (%.2fV) contract=%.1fV",
-                       (_lastVoutBand <= 2) ? kBandNames[_lastVoutBand] : "?",
-                       kBandNames[band], voutMv / 1000.0f, _voltage);
-        _lastVoutBand = band;
+    // Classify the MEASURED rail into three bands and log the transitions.
+    // This used to classify register 0x11, which on this board is pinned near
+    // 5 V regardless of the contract, so the band never changed and the log
+    // said "LOW(~5V)" forever. The INA238 is the only sensor that actually sees
+    // this rail.
+    const float   railV = _railVoltageV;
+    const uint8_t band  = !_railValid ? 0 : (railV < 7.0f ? 1 : 2);
+    if (band != _lastRailBand) {
+        static const char *kBandNames[] = {"NO-MEAS", "LOW(~5V)", "HIGH"};
+        DiagLog::event("rail %s -> %s (%.2fV) contract=%.1fV",
+                       (_lastRailBand <= 2) ? kBandNames[_lastRailBand] : "?",
+                       kBandNames[band], railV, _voltage);
+        _lastRailBand = band;
     }
 
+    const bool hasInaAlert = (inaAlertText != nullptr && inaAlertText[0] != '\0');
+
+    // r11 is register 0x11, printed as evidence only - it is NOT the rail. rail
+    // is the INA238 measurement that every decision now uses; NO-MEAS means the
+    // sensor is absent and the rail-dependent checks are being skipped.
     Serial.printf(
-        "[PDDIAG] st=%s contract=%.1fV/%.2fA pdo=%u | VOUT=%.2fV VREQ=%.2fV "
-        "IREQ=%.2fA Iout=%.2fA Tchip=%dC | status=0x%02X sticky=0x%02X%s%s "
+        "[PDDIAG] st=%s contract=%.1fV/%.2fA pdo=%u | rail=%.2fV%s r11=%.2fV VREQ=%.2fV "
+        "IREQ=%.2fA Iout=%.2fA Tchip=%dC | status=0x%02X sticky=0x%02X%s%s%s%s "
         "msgrlt=%u opmode=0x%02X cfg=0x%02X mask=0x%02X sys=0x%02X voutctl=%u | "
         "ina=%.2fV/%.2fA out=%.2fV pot=%d | boot#%u %s\n",
         kStateNames[static_cast<uint8_t>(_state)],
         _voltage, _current, _activePdoIndex,
+        _railVoltageV, _railValid ? "" : "(NO-MEAS)",
         voutMv / 1000.0f, vreqMv / 1000.0f, ireqMa / 1000.0f, ioutMa / 1000.0f, chipTmp,
         _statusLast, _statusSticky,
         hasChipFault() ? " FAULT:" : "", getFaultText(),
+        hasInaAlert ? " INA_FAULT:" : "", hasInaAlert ? inaAlertText : "",
         msgRlt, opMode, config, mask, system, voutCtl,
         inaVoltageV, inaCurrentA, outputVoltageV, digipotStep,
         DiagLog::bootCount(), DiagLog::resetReasonText());
@@ -202,11 +212,12 @@ bool PDManager::isSourcePhysicallyPresent() {
     if ((opMode & 0x03) != 0) {
         return true;
     }
-    // Fallback: VOUT >= 3.0V. Note register 0x11 is VOUT (post-MOS), not VBUS,
-    // so this reads 0 whenever the MOS is open even though the source is still
-    // attached. OPMODE above is the authoritative attach test; this only covers
-    // the window before OPMODE has settled.
-    return (_pd.readVoltage() >= 3000);
+    // Fallback for the window before OPMODE has settled. This used to test
+    // register 0x11 >= 3 V, which is ALWAYS true on this board - so the whole
+    // function always returned true and a detach could never be detected at
+    // all. The measured rail is the only usable substitute; with no
+    // measurement, OPMODE alone decides.
+    return _railValid && (_railVoltageV >= kRailValidMinV);
 }
 
 void PDManager::update() {
@@ -233,6 +244,24 @@ void PDManager::update() {
         }
     }
 
+    // OPMODE transitions, logged with timestamps. OPMODE is the only window
+    // into the chip's source classification (CCFLIP / PDMOD / LGCYMOD), and
+    // WHEN those bits move relative to STARTED/READY is the evidence that
+    // separates "the source never sent capabilities" from "the chip was deaf
+    // to them": per datasheet 7.5, a failing DN (moisture) impedance check
+    // makes the chip not acknowledge Source_Capability messages at all. A
+    // failed I2C read also shows up here as a transition to 0x00, which makes
+    // a wedged bus visible instead of silent.
+    const uint8_t opMode = _pd.readOpMode();
+    if (opMode != _lastOpMode) {
+        DiagLog::event("opmode 0x%02X -> 0x%02X%s%s%s",
+                       _lastOpMode, opMode,
+                       (opMode & 0x80) ? " CCFLIP" : "",
+                       (opMode & 0x02) ? " PDMOD" : "",
+                       (opMode & 0x01) ? " LGCYMOD" : "");
+        _lastOpMode = opMode;
+    }
+
     // Handle physical disconnection. Require a sustained absence (not a count
     // of calls) so a transient OPMODE/VOUT dip during a voltage transition
     // (5V -> 20V) does not falsely disconnect and drop VBUS, which would
@@ -243,12 +272,11 @@ void PDManager::update() {
                 _absentSinceMs = millis();
             }
             if (millis() - _absentSinceMs >= kAbsentConfirmMs) {
-                DiagLog::event("DETACH from state %u (VOUT=%.2fV)",
-                               static_cast<unsigned>(_state), _pd.readVoltage() / 1000.0f);
+                DiagLog::event("DETACH from state %u (rail=%.2fV)",
+                               static_cast<unsigned>(_state), _railVoltageV);
                 if (_state == PDNegotiationState::Ready) {
                     _justDetached = true;
                 }
-                _pd.setOutput(0); // force-OFF
                 _state          = PDNegotiationState::Disconnected;
                 _activePdoIndex = 0;
                 _voltage        = 0.0f;
@@ -260,6 +288,7 @@ void PDManager::update() {
                 _contractLostSinceMs  = 0;
                 _recoveryAttempts     = 0;
                 _recoveryExhausted    = false;
+                _lastPdoPollMs        = 0;
                 return;
             }
         } else {
@@ -280,6 +309,10 @@ void PDManager::update() {
         applyStartupConfig();
         if (_state == PDNegotiationState::Ready) {
             attemptRecovery("chip restart");
+        } else if (_state == PDNegotiationState::AttachSettle) {
+            _stateEnteredAt = millis();
+            _nextRequestAllowedMs = 0;
+            _lastPdoPollMs = 0;
         }
     }
 
@@ -291,39 +324,61 @@ void PDManager::update() {
     }
 
     switch (_state) {
-        case PDNegotiationState::Disconnected:
-            if ((status & STARTED_MSK) || isSourcePhysicallyPresent()) {
+        case PDNegotiationState::Disconnected: {
+            const bool chipStarted = (status & STARTED_MSK) != 0;
+            const bool sourceDetected = (opMode & 0x03) != 0;
+
+            if (chipStarted || sourceDetected) {
                 applyStartupConfig(); // config writes must follow STARTED=1
-                DiagLog::event("attach: VOUT=%.2fV opmode=0x%02X",
-                               _pd.readVoltage() / 1000.0f, _pd.readOpMode());
+                DiagLog::event("attach: rail=%.2fV opmode=0x%02X%s",
+                               _railVoltageV, opMode,
+                               chipStarted ? " (STARTED)" : "");
                 _state          = PDNegotiationState::AttachSettle;
                 _stateEnteredAt = millis();
+                _lastPdoPollMs  = 0;
+                _nextRequestAllowedMs = 0;
             }
             break;
+        }
 
-        case PDNegotiationState::AttachSettle:
+        case PDNegotiationState::AttachSettle: {
             if (_nextRequestAllowedMs != 0 &&
                 static_cast<int32_t>(millis() - _nextRequestAllowedMs) < 0) {
                 break; // still backing off from a rejected request
             }
-            if ((status & NEWPDO_MSK) || (millis() - _stateEnteredAt >= kAttachSettleMs)) {
-                _nextRequestAllowedMs = 0;
+
+            const uint32_t now = millis();
+
+            // Poll the PDO table first: if capabilities have arrived, request
+            // the best PDO and leave AttachSettle immediately.
+            const bool pollDue = (status & NEWPDO_MSK) ||
+                                 (_lastPdoPollMs == 0) ||
+                                 (now - _lastPdoPollMs >= kAttachSettlePollMs);
+            if (pollDue) {
+                _lastPdoPollMs = now;
                 _pd.refreshPdoTable();
 
                 if (requestBestPdo()) {
                     DiagLog::event("request pdo%u %.1fV %.2fA", _activePdoIndex, _voltage, _current);
                     _state          = PDNegotiationState::Requesting;
-                    _stateEnteredAt = millis();
-                } else {
-                    // No eligible fixed PDO yet. Re-stamp so the retry stays
-                    // rate-limited to kAttachSettleMs: without this the elapsed
-                    // test above remains permanently true and refreshPdoTable()
-                    // - a 26-byte I2C burst - would run on every tick, i.e. at
-                    // 20 Hz since the task moved to 50 ms.
-                    _stateEnteredAt = millis();
+                    _stateEnteredAt = now;
+                    break;
                 }
             }
+
+            // Repeated re-request: fire a raw PD_REQMSG every few hundred ms
+            // even with no cached capabilities. The AP33772S has no direct
+            // Get_Source_Cap command (PD_CMDMSG only exposes HRST/DRSWP), but
+            // writing a request when no caps are cached may prompt the chip to
+            // issue Get_Source_Cap to the source to obtain them.
+            if (now - _lastCapsReqMs >= kCapsReRequestMs) {
+                _lastCapsReqMs = now;
+                _pd.requestPdoRaw(1, 0); // request PDO 1 @ 5V (CURRENT_SEL 0)
+                DiagLog::event("caps re-request (rail=%.2fV opmode=0x%02X)",
+                               _railVoltageV, opMode);
+            }
             break;
+        }
 
         case PDNegotiationState::Requesting: {
             // Guide 8.3, step 4: "After writing to the PD_REQMSG register, the
@@ -341,9 +396,16 @@ void PDManager::update() {
             const uint8_t msgResult   = static_cast<uint8_t>(_pd.readMsgResult() & 0x07);
             const float activeVoltage = _pd.readVREQ() / 1000.0f;
             const bool voltageMatched = (_voltage > 0.0f) && (fabsf(activeVoltage - _voltage) <= 0.5f);
-            // The physical outcome, which no stale register can fake.
-            const float voutV         = _pd.readVoltage() / 1000.0f;
-            const bool  voutArrived   = (_voltage > 0.0f) && (voutV >= _voltage * kContractLiveFraction);
+            // The physical outcome, which no stale register can fake - measured
+            // by the INA238, not by register 0x11 (see getVoutVoltageV()).
+            //
+            // With no rail measurement this cannot be checked, and it must then
+            // PASS, not fail. Requiring it unconditionally is what produced the
+            // infinite request loop: 0x11 reads ~5 V always, so the gate was
+            // permanently shut for every contract above 6.6 V and the state
+            // machine could never leave Requesting.
+            const bool  railArrived   = !_railValid ||
+                ((_voltage > 0.0f) && (_railVoltageV >= _voltage * kContractLiveFraction));
             const bool  msgSuccess    = (msgResult == 1);
 
             // An explicit rejection is not "still busy": stop waiting out the
@@ -365,22 +427,26 @@ void PDManager::update() {
                 break;
             }
 
-            if (msgSuccess && voltageMatched && voutArrived) {
+            if (msgSuccess && voltageMatched && railArrived) {
                 _state = PDNegotiationState::Ready;
-                // Ensure VOUT is ON. It was turned on at 5V in
-                // applyStartupConfig(); this also re-enables it after a
-                // re-negotiation (the recheck no longer forces VOUT off).
-                _pd.setOutput(1);
+                // Publish what was GRANTED, not what was asked for. These were
+                // assigned from the request in requestBestPdo() before the
+                // source had agreed to anything, so the screen and the power
+                // budget could both describe a contract that never existed.
+                const int grantedVreqMv = _pd.readVREQ();
+                const int grantedIreqMa = _pd.readIREQ();
+                if (grantedVreqMv > 0) { _voltage = grantedVreqMv / 1000.0f; }
+                if (grantedIreqMa > 0) { _current = grantedIreqMa / 1000.0f; }
                 _justAttached        = true;
                 _contractLostSinceMs = 0;
                 _recoveryAttempts    = 0;
                 _recoveryExhausted   = false;
-                DiagLog::event("READY %.1fV VOUT=%.2fV VREQ=%.2fV", _voltage, voutV, activeVoltage);
+                DiagLog::event("READY %.1fV/%.2fA rail=%.2fV", _voltage, _current, _railVoltageV);
                 Serial.printf("[PD] Contract active: %.1fV %.2fA %.1fW\n",
                               _voltage, _current, _voltage * _current);
             } else if (millis() - _stateEnteredAt >= kNegotiationTimeoutMs) {
-                DiagLog::event("request TIMEOUT msgrlt=%u VOUT=%.2fV VREQ=%.2fV",
-                               msgResult, voutV, activeVoltage);
+                DiagLog::event("request TIMEOUT msgrlt=%u rail=%.2fV VREQ=%.2fV",
+                               msgResult, _railVoltageV, activeVoltage);
                 Serial.println("[PD] Contract request timed out; retrying...");
                 _state          = PDNegotiationState::AttachSettle;
                 _stateEnteredAt = millis();
@@ -395,8 +461,15 @@ void PDManager::update() {
             // while still advertising 20 V left the firmware sitting on a dead
             // contract forever - reporting 20 V on screen, "(e)" for the output,
             // and no fault anywhere.
-            const float voutV = _pd.readVoltage() / 1000.0f;
-            if (_voltage > 0.0f && voutV < _voltage * kContractLiveFraction) {
+            //
+            // Measured by the INA238. Against register 0x11 this test was TRUE
+            // on the very first tick of every contract above 6.6 V, so had the
+            // acceptance gate ever let a contract through, this would have torn
+            // it down 300 ms later and burned all 5 recovery attempts. With no
+            // rail measurement the check is skipped: a missing sensor must not
+            // be able to destroy a working contract.
+            if (_railValid && _voltage > 0.0f &&
+                _railVoltageV < _voltage * kContractLiveFraction) {
                 if (_contractLostSinceMs == 0) {
                     _contractLostSinceMs = millis();
                 }
@@ -474,9 +547,8 @@ bool PDManager::attemptRecovery(const char *reason) {
     _lastRecoveryMs = millis();
     ++_recoveryAttempts;
 
-    const float voutV = _pd.readVoltage() / 1000.0f;
-    DiagLog::event("RECOVER %u/%u: %s (VOUT=%.2fV want %.1fV)",
-                   _recoveryAttempts, kMaxRecoveryAttempts, reason, voutV, _voltage);
+    DiagLog::event("RECOVER %u/%u: %s (rail=%.2fV want %.1fV)",
+                   _recoveryAttempts, kMaxRecoveryAttempts, reason, _railVoltageV, _voltage);
 
     if (_recoveryAttempts > kMaxRecoveryAttempts) {
         _recoveryExhausted = true;
@@ -495,6 +567,7 @@ bool PDManager::attemptRecovery(const char *reason) {
         DiagLog::event("RECOVER: no eligible PDO; back to settle");
         _state          = PDNegotiationState::AttachSettle;
         _stateEnteredAt = millis();
+        _lastPdoPollMs  = 0;
         return false;
     }
 
@@ -557,6 +630,10 @@ bool PDManager::isReady() const {
     return _state == PDNegotiationState::Ready;
 }
 
+bool PDManager::isAttachRetrying() const {
+    return _state == PDNegotiationState::AttachSettle;
+}
+
 bool PDManager::justAttached() const {
     return _justAttached;
 }
@@ -577,18 +654,6 @@ float PDManager::getCurrent() const {
     return _current;
 }
 
-float PDManager::getWattage() const {
-    return _voltage * _current;
-}
-
-bool PDManager::isOutputEnabled() {
-    // VOUT is either ~0V (MOS off) or >= 5V (MOS on, following VBUS), so a
-    // 1V threshold cleanly separates the two states. Reading the measured
-    // voltage is the only reliable way: the chip's own protections turn the
-    // MOS off internally without updating the SYSTEM register.
-    return _pd.readVoltage() >= 1000;
-}
-
 float PDManager::getVoutVoltageV() {
     return _pd.readVoltage() / 1000.0f;
 }
@@ -599,7 +664,6 @@ void PDManager::shutdown() {
     }
 
     _shutdownLatched = true;
-    DiagLog::event("PD SHUTDOWN latched (VOUT=%.2fV)", _pd.readVoltage() / 1000.0f);
+    DiagLog::event("PD SHUTDOWN latched (rail=%.2fV)", _railVoltageV);
     Serial.println("[PD] Shutdown: switching VBUS off");
-    _pd.setOutput(0); // force-OFF
 }

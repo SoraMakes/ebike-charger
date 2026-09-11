@@ -9,7 +9,7 @@
 namespace {
 
 constexpr uint32_t kMagic    = 0x50444347;  // "PDCG" - marks the RTC block as valid
-constexpr uint8_t  kTextSize = 40;
+constexpr uint8_t  kTextSize = 60;
 
 struct Entry {
     uint32_t ms;    ///< millis() within the boot that recorded it

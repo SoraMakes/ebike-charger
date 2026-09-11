@@ -12,7 +12,6 @@ static constexpr uint32_t kIncreaseIntervalMs = 250;
 static constexpr int16_t kFinalRampSteps = 4;
 // Four increase intervals per second; divisor 8 gives 50% of target per second.
 static constexpr int16_t kRampUpDivisor = 8;
-static constexpr uint32_t kVoltageLogIntervalMs = 1000;
 
 // Measured output-current calibration (actual current vs digipot step).
 // Recalibrated on the final ESP32 assembly from three measured points:
@@ -44,47 +43,6 @@ void CurrentControl::begin(TwoWire &wire, VoltageMonitor &voltageMonitor, PDMana
     }
 
     safe();
-}
-
-// TODO: remove again!
-void CurrentControl::test(uint8_t maxLevel) {
-    if (_shutdownLatched) {
-        safe();
-        return;
-    }
-    const uint8_t testMaxLevel = min(maxLevel, kMaxStep);
-
-    safe();
-    Serial.println("[CURRENT TEST] level -1, digipot step 0");
-    Serial.println("[CURRENT TEST] starting next level in 20 seconds");
-    delay(20000);
-
-    for (uint8_t level = 0; level <= testMaxLevel; ++level) {
-        _powerLevel = level;
-        writeDigipot(level);
-
-        Serial.printf("[CURRENT TEST] level %u, digipot step %u\n",
-                      level, level);
-
-        if (level < testMaxLevel) {
-            delay(10000);
-        }
-    }
-}
-
-// TODO: remove
-void CurrentControl::test_set_fixed(uint8_t level) {
-    if (_shutdownLatched) {
-        safe();
-        return;
-    }
-    const uint8_t testLevel = min(level, kMaxStep);
-
-    _powerLevel = testLevel;
-    writeDigipot(testLevel);
-    Serial.printf("[CURRENT TEST] level %u, digipot step %u\n",
-                  testLevel, testLevel);
-    delay(5*60*1000);  // 5 minutes
 }
 
 void CurrentControl::update(float limitWatts) {
@@ -206,7 +164,6 @@ void CurrentControl::writeDigipot(uint8_t step) {
         return;
     }
 
-//    Serial.printf("[DIGIPOT] writing step %u\n", step);
     _wire->beginTransmission(kMCP4018Address);
     _wire->write(step);
     if (_wire->endTransmission() == 0) {

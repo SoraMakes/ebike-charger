@@ -80,7 +80,20 @@ static void logThermalStatus() {
 }
 
 static void updatePd() {
+    // The PD state machine has no usable voltage sensor of its own: register
+    // 0x11 does not track the PD rail on this board (see
+    // PDManager::getVoutVoltageV). The INA238 is the only sensor that sees it,
+    // so it has to be handed in. powerMonitorUpdateTask runs before
+    // pdUpdateTask in loop() so this is the current reading, not last tick's.
+    pdManager.setMeasuredRailVoltage(powerMonitor.getInputVoltage());
+
     pdManager.update();
+
+    // Keep-alive: while a source is attached but no contract exists and the
+    // firmware is still retrying to force one, run the fan at full speed so an
+    // impatient powerbank does not auto-shut-down on low load before the
+    // re-attach retries can catch its capabilities.
+    thermalManager.setKeepAlive(pdManager.isAttachRetrying());
 
     if (pdManager.justDetached()) {
         currentControl.safe();
@@ -116,7 +129,8 @@ static void logPdDiagnostics() {
     pdManager.logDiagnostics(powerMonitor.getInputVoltage(),
                              powerMonitor.getInputCurrent(),
                              voltageMonitor.getVoltage(),
-                             currentControl.getDigipotStep());
+                             currentControl.getDigipotStep(),
+                             powerMonitor.getAlertText());
 }
 
 // Re-prints the retained event ring buffer, including events recorded before a
@@ -125,8 +139,21 @@ static void dumpDiagnosticHistory() {
     DiagLog::dump();
 }
 
+// The voltage to bill the PD power budget against. Prefer the measured rail,
+// but never let a missing sensor decide the budget: the INA238 library returns
+// 0.0 on any I2C failure, which zeroed pdPowerLimit -> outputPowerLimit -> a
+// permanent safe() with no diagnostic anywhere. The contract voltage is what
+// the source actually promised, so it is the correct fallback.
+static float budgetVoltageV() {
+    const float measured = powerMonitor.getInputVoltage();
+    if (isfinite(measured) && measured >= 3.0f) {
+        return measured;
+    }
+    return pdManager.getVoltage();
+}
+
 static void updateCurrentControl() {
-    const float pdPowerLimit = pdManager.getCurrent() * powerMonitor.getInputVoltage();
+    const float pdPowerLimit = pdManager.getCurrent() * budgetVoltageV();
     const float pdOutputPowerLimit = calculateOutputPowerLimit(pdPowerLimit);
     const float thermalOutputPowerLimit = thermalManager.getOutputPowerLimitW();
     const float outputPowerLimit = min(pdOutputPowerLimit, thermalOutputPowerLimit);
@@ -136,7 +163,7 @@ static void updateCurrentControl() {
 
 // Feeds the efficiency estimator with the allowed vs. measured input power.
 static void updateEfficiency() {
-    const float inputVoltageV = powerMonitor.getInputVoltage();
+    const float inputVoltageV = budgetVoltageV();
     const float allowedInputPowerW = pdManager.getCurrent() * inputVoltageV;
     const float actualInputPowerW  = inputVoltageV * powerMonitor.getInputCurrent();
 
@@ -147,7 +174,7 @@ static void updateEfficiency() {
 
 // --- Task table: interval and action defined together ------------------------
 
-static PeriodicTask displayTask(500, updateDisplay);
+static PeriodicTask displayTask(100, updateDisplay);
 static PeriodicTask thermalUpdateTask(1000, updateThermal);
 static PeriodicTask thermalLogTask(5000, logThermalStatus);
 // 50 ms, not 1 s. PDManager's own constants (attach settle 300 ms, status poll
@@ -174,7 +201,7 @@ static PeriodicTask currentUpdateTask(50, updateCurrentControl);
 static PeriodicTask efficiencyUpdateTask(50, updateEfficiency);
 static PeriodicTask noSourceLogTask(1000, logNoSource);
 static PeriodicTask pdDiagTask(2000, logPdDiagnostics);
-static PeriodicTask diagHistoryTask(30000, dumpDiagnosticHistory);
+static PeriodicTask diagHistoryTask(1000, dumpDiagnosticHistory);
 
 void setup() {
     Serial.begin(115200);
@@ -204,6 +231,10 @@ void setup() {
     currentControl.begin(Wire, voltageMonitor, pdManager);
 
     displayManager.begin();
+    // Immediately: the reset reason, on the only channel that survives a boot
+    // loop. The main display overwrites this on its first 500 ms tick, and
+    // keeps the same information on the bottom line from then on.
+    displayManager.showBootBanner(DiagLog::bootCount(), DiagLog::resetReasonText());
     efficiencyEstimator.begin();
 
     voltageMonitor.begin(33, currentControl);  // TTGO T-Display: voltage-divider ADC input
@@ -230,9 +261,13 @@ void loop() {
     thermalUpdateTask.tick();
     thermalLogTask.tick();
 
+    // powerMonitorUpdateTask MUST run before pdUpdateTask: the PD state machine
+    // now takes its rail voltage from the INA238 via
+    // PDManager::setMeasuredRailVoltage(), and both run at 50 ms, so the wrong
+    // order would feed it a reading one full tick stale on every pass.
+    powerMonitorUpdateTask.tick();
     pdUpdateTask.tick();
     voltageUpdateTask.tick();
-    powerMonitorUpdateTask.tick();
 
     // Diagnostics run before every early return below, so a latched fault keeps
     // reporting itself for as long as the board stays powered.
