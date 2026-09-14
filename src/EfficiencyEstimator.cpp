@@ -19,10 +19,8 @@ void EfficiencyEstimator::update(float allowedRegulatorInputW, float actualRegul
 
     if (utilization > kTargetUtilization && _efficiency > kMinEfficiency) {
         _efficiency = kMinEfficiency;
-        Serial.printf("[EFFICIENCY] high draw (%.0f%%); dropped to %.2f\n", utilization * 100.0f, _efficiency);
     } else if (utilization < kTargetUtilization && rampUpFinished &&_efficiency < kMaxEfficiency) {
         _efficiency = min(kMaxEfficiency, _efficiency + kEfficiencyStep);
-        Serial.printf("[EFFICIENCY] headroom (%.0f%%); raised to %.2f\n", utilization * 100.0f, _efficiency);
     }
 }
 

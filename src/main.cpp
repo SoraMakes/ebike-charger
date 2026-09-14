@@ -70,34 +70,17 @@ static void updateThermal() {
 
 static void logThermalStatus() {
     if (thermalManager.hasSensorFault()) {
-        Serial.println("[THERM] temperature unavailable; charging disabled");
-    } else {
-        Serial.printf("[THERM] temperature=%.1fC thermal-limit=%.1fW%s\n",
-                      thermalManager.getTemperatureC(),
-                      thermalManager.getOutputPowerLimitW(),
-                      thermalManager.isShutdownLatched() ? " shutdown-latched" : "");
+        DiagLog::event("safety no temp");
     }
 }
 
 static void updatePd() {
-    // The PD state machine has no usable voltage sensor of its own: register
-    // 0x11 does not track the PD rail on this board (see
-    // PDManager::getVoutVoltageV). The INA238 is the only sensor that sees it,
-    // so it has to be handed in. powerMonitorUpdateTask runs before
-    // pdUpdateTask in loop() so this is the current reading, not last tick's.
-    pdManager.setMeasuredRailVoltage(powerMonitor.getInputVoltage());
-
+    // INA238 PD-input volts feed liveness/accept checks.
+    pdManager.setMeasuredInputVoltage(powerMonitor.getInputVoltage());
     pdManager.update();
-
-    // Keep-alive: while a source is attached but no contract exists and the
-    // firmware is still retrying to force one, run the fan at full speed so an
-    // impatient powerbank does not auto-shut-down on low load before the
-    // re-attach retries can catch its capabilities.
-    thermalManager.setKeepAlive(pdManager.isAttachRetrying());
 
     if (pdManager.justDetached()) {
         currentControl.safe();
-        Serial.println("[PD] Power source disconnected.");
     }
 
     if (pdManager.voltageJumped()) {
@@ -106,7 +89,6 @@ static void updatePd() {
 
     if (pdManager.justAttached()) {
         currentControl.safe();
-        Serial.println("[PD] Contract active; output stays at the safe setpoint until it settles.");
     }
 }
 
@@ -119,12 +101,10 @@ static void updatePowerMonitor() {
 }
 
 static void logNoSource() {
-    Serial.println("[PD] No power source attached.");
+    DiagLog::event("no source");
 }
 
-// Repeats forever, so the state is still readable when a PC is attached long
-// after the fault. Must run unconditionally, ahead of every early return in
-// loop() - the failure being chased is precisely one where the loop bails out.
+// Periodic compact PD status (before early returns so faults stay visible).
 static void logPdDiagnostics() {
     pdManager.logDiagnostics(powerMonitor.getInputVoltage(),
                              powerMonitor.getInputCurrent(),
@@ -133,27 +113,14 @@ static void logPdDiagnostics() {
                              powerMonitor.getAlertText());
 }
 
-// Re-prints the retained event ring buffer, including events recorded before a
-// brownout reset. Slower than the one-line dump because it is many lines.
 static void dumpDiagnosticHistory() {
     DiagLog::dump();
 }
 
-// The voltage to bill the PD power budget against. Prefer the measured rail,
-// but never let a missing sensor decide the budget: the INA238 library returns
-// 0.0 on any I2C failure, which zeroed pdPowerLimit -> outputPowerLimit -> a
-// permanent safe() with no diagnostic anywhere. The contract voltage is what
-// the source actually promised, so it is the correct fallback.
-static float budgetVoltageV() {
-    const float measured = powerMonitor.getInputVoltage();
-    if (isfinite(measured) && measured >= 3.0f) {
-        return measured;
-    }
-    return pdManager.getVoltage();
-}
-
 static void updateCurrentControl() {
-    const float pdPowerLimit = pdManager.getCurrent() * budgetVoltageV();
+    // Measured INA volts set budget; contract current is the target.
+    const float inputVoltageV = powerMonitor.getInputVoltage();
+    const float pdPowerLimit = pdManager.getCurrent() * inputVoltageV;
     const float pdOutputPowerLimit = calculateOutputPowerLimit(pdPowerLimit);
     const float thermalOutputPowerLimit = thermalManager.getOutputPowerLimitW();
     const float outputPowerLimit = min(pdOutputPowerLimit, thermalOutputPowerLimit);
@@ -163,7 +130,8 @@ static void updateCurrentControl() {
 
 // Feeds the efficiency estimator with the allowed vs. measured input power.
 static void updateEfficiency() {
-    const float inputVoltageV = budgetVoltageV();
+    // Measured INA volts/current; contract current is the allowed target.
+    const float inputVoltageV = powerMonitor.getInputVoltage();
     const float allowedInputPowerW = pdManager.getCurrent() * inputVoltageV;
     const float actualInputPowerW  = inputVoltageV * powerMonitor.getInputCurrent();
 
@@ -177,23 +145,7 @@ static void updateEfficiency() {
 static PeriodicTask displayTask(100, updateDisplay);
 static PeriodicTask thermalUpdateTask(1000, updateThermal);
 static PeriodicTask thermalLogTask(5000, logThermalStatus);
-// 50 ms, not 1 s. PDManager's own constants (attach settle 300 ms, status poll
-// 100 ms, profile recheck 500 ms, detach debounce 500 ms, contract-lost debounce
-// 300 ms) are all sub-second, so at a 1 s tick every one of them was TRUE on
-// every call and the effective period of everything was 1 s.
-//
-// The reason is REACTION LATENCY, not the read-clear STATUS register: read-clear
-// bits latch in the chip until something reads them, so a slow poll only delays
-// detection, it does not lose anything. Polling faster actually destroys them
-// sooner - which is why this rate is only safe now that pollStatus() accumulates
-// every bit into _statusSticky first. What the speed buys is the ability to see
-// the chip's 30 ms protection debounce and a PD negotiation that completes in
-// tens of milliseconds, plus a chance at the ~100 ms post-STARTED window that
-// guide 8.2 allows for writing CONFIG/MASK/SYSTEM.
-//
-// It also depends on the time-based detach debounce in PDManager: the old code
-// declared a detach on a single failed presence test, which at 20 Hz would have
-// been 20 chances per second to spuriously drop VBUS.
+// 50ms PD tick for sub-second debounce/timeout constants.
 static PeriodicTask pdUpdateTask(50, updatePd);
 static PeriodicTask voltageUpdateTask(100, updateVoltage);
 static PeriodicTask powerMonitorUpdateTask(50, updatePowerMonitor);
@@ -201,55 +153,33 @@ static PeriodicTask currentUpdateTask(50, updateCurrentControl);
 static PeriodicTask efficiencyUpdateTask(50, updateEfficiency);
 static PeriodicTask noSourceLogTask(1000, logNoSource);
 static PeriodicTask pdDiagTask(2000, logPdDiagnostics);
-static PeriodicTask diagHistoryTask(1000, dumpDiagnosticHistory);
+static PeriodicTask diagHistoryTask(10000, dumpDiagnosticHistory);
 
 void setup() {
     Serial.begin(115200);
 
     Serial.println("\n\n=== USB PD Charger ===");
 
-    // Before anything else: report why we are booting and replay whatever the
-    // previous boot managed to record before it died.
-    DiagLog::begin();
-
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
-    // FIRST thing on the bus: force the digipot to its minimum-current step.
-    //
-    // The MCP4018 has a volatile wiper that powers up at MID-SCALE, and it sits
-    // on the same 3V3 rail as the ESP. So after a brownout reset the digipot is
-    // commanding roughly half of kMaxAllowedOutputAmps while the AP33772S - on
-    // its own VBUS-derived supply, and therefore NOT reset - is still holding
-    // VOUT on at the full contract voltage. The regulator is driven hard for the
-    // whole boot, which is exactly the load step that can trip a marginal PSU
-    // and cause the next brownout.
-    //
-    // This closes the setup() part of that window. It does NOT close the ESP32
-    // bootloader part (~200-300 ms before setup() runs at all), which firmware
-    // cannot reach - see the note in README about giving the regulator a real
-    // enable line.
+    // Digipot powers at mid-scale: force safe step first.
     currentControl.begin(Wire, voltageMonitor, pdManager);
 
     displayManager.begin();
-    // Immediately: the reset reason, on the only channel that survives a boot
-    // loop. The main display overwrites this on its first 500 ms tick, and
-    // keeps the same information on the bottom line from then on.
-    displayManager.showBootBanner(DiagLog::bootCount(), DiagLog::resetReasonText());
     efficiencyEstimator.begin();
 
-    voltageMonitor.begin(33, currentControl);  // TTGO T-Display: voltage-divider ADC input
+    voltageMonitor.begin(33, currentControl);  // voltage-divider ADC input
     if (!thermalManager.begin(Wire, kFanPin, currentControl)) {
-        Serial.println("[THERM] AHT10 unavailable; charging disabled.");
+        DiagLog::event("safety temp sensor");
     }
 
     while (!pdManager.begin(Wire, kPdIntPin)) {
-        Serial.println("[SYSTEM] ERROR: PD controller not found on I2C. Retrying...");
         displayManager.showMessage("PD controller\nnot found!");
         delay(2000);
     }
 
     if (!powerMonitor.begin()) {
-        Serial.println("[SYSTEM] WARNING: INA238 not found on I2C.");
+        DiagLog::event("safety ina missing");
     }
 }
 
@@ -261,16 +191,10 @@ void loop() {
     thermalUpdateTask.tick();
     thermalLogTask.tick();
 
-    // powerMonitorUpdateTask MUST run before pdUpdateTask: the PD state machine
-    // now takes its rail voltage from the INA238 via
-    // PDManager::setMeasuredRailVoltage(), and both run at 50 ms, so the wrong
-    // order would feed it a reading one full tick stale on every pass.
     powerMonitorUpdateTask.tick();
     pdUpdateTask.tick();
     voltageUpdateTask.tick();
 
-    // Diagnostics run before every early return below, so a latched fault keeps
-    // reporting itself for as long as the board stays powered.
     pdDiagTask.tick();
     diagHistoryTask.tick();
 
