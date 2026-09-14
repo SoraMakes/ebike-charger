@@ -1,5 +1,6 @@
 #include "ThermalManager.h"
 #include "CurrentControl.h"
+#include "DiagLog.h"
 
 static constexpr float kFanMinimumTemperatureC = 32.0f;
 static constexpr float kFanFullTemperatureC = 38.0f;
@@ -20,11 +21,10 @@ bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin, CurrentControl &curren
     // ESP32: configure the LEDC PWM peripheral for the fan.
     const uint32_t configuredFrequency = ledcSetup(kFanLedcChannel, kFanPwmFrequencyHz, 10);
     if (configuredFrequency == 0) {
-        Serial.println("[THERM] Fan PWM setup failed");
+        DiagLog::event("safety fan pwm");
     }
     pinMode(_fanPin, OUTPUT);
-    // Attach LEDC after pinMode: on ESP32 pinMode configures the GPIO matrix
-    // and must not overwrite the peripheral output routing.
+    // Attach after pinMode so GPIO routing is not overwritten.
     ledcAttachPin(_fanPin, kFanLedcChannel);
 
     applyFanPwm(kFanMinimumDuty);
@@ -58,9 +58,7 @@ void ThermalManager::update() {
     _temperatureC = temperature;
 
     uint16_t fanDuty = kFanMinimumDuty;
-    if (_keepAlive) {
-        fanDuty = kFanFullDuty;
-    } else if (_temperatureC >= kFanFullTemperatureC) {
+    if (_temperatureC >= kFanFullTemperatureC) {
         fanDuty = kFanFullDuty;
     } else if (_temperatureC > kFanMinimumTemperatureC) {
         const float ratio = (_temperatureC - kFanMinimumTemperatureC) / (kFanFullTemperatureC - kFanMinimumTemperatureC);
@@ -97,18 +95,13 @@ bool ThermalManager::isShutdownLatched() const {
     return _shutdownLatched;
 }
 
-void ThermalManager::setKeepAlive(bool active) {
-    _keepAlive = active;
-}
-
 void ThermalManager::applyFanPwm(uint16_t duty) const {
-    // ESP32: write via the LEDC peripheral.
     ledcWrite(kFanLedcChannel, duty);
 }
 
 void ThermalManager::enterShutdown(const char *reason) {
     if (!_shutdownLatched) {
-        Serial.printf("[THERM] Shutdown: %s\n", reason);
+        DiagLog::event("safety %s", reason);
     }
     _shutdownLatched = true;
     _outputPowerLimitW = 0.0f;

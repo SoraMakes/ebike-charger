@@ -2,22 +2,11 @@
 
 #include <Arduino.h>
 
-/// Estimates the voltage-regulator efficiency by comparing the actual
-/// measured input power against the allowed input power budget.
+/// Regulator efficiency estimate from allowed vs measured input power.
 class EfficiencyEstimator {
 public:
-    /// Resets the estimate to its default baseline.
     void begin();
-
-    /// Adjusts the estimate. Call periodically (e.g. every 50 ms).
-    /// @param allowedRegulatorInputW Max input power the PD contract allows,
-    ///                               minus the constant electronics draw.
-    /// @param actualRegulatorInputW  Measured input power right now, minus the
-    ///                               constant electronics draw.
-    /// @param rampUpFinished         True once the output current reached its target.
     void update(float allowedRegulatorInputW, float actualRegulatorInputW, bool rampUpFinished);
-
-    /// Returns the current efficiency estimate.
     float getEfficiency() const;
 
 private:
