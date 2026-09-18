@@ -68,20 +68,10 @@ static void updateThermal() {
     thermalManager.update();
 }
 
-static void logThermalStatus() {
-    if (thermalManager.hasSensorFault()) {
-        DiagLog::event("safety no temp");
-    }
-}
-
 static void updatePd() {
-    // INA238 PD-input volts feed liveness/accept checks.
+    // INA238 PD-input volts feed contract accept/lost checks.
     pdManager.setMeasuredInputVoltage(powerMonitor.getInputVoltage());
     pdManager.update();
-
-    if (pdManager.justDetached()) {
-        currentControl.safe();
-    }
 
     if (pdManager.voltageJumped()) {
         currentControl.safe();
@@ -100,17 +90,20 @@ static void updatePowerMonitor() {
     powerMonitor.update();
 }
 
-static void logNoSource() {
-    DiagLog::event("no source");
-}
-
-// Periodic compact PD status (before early returns so faults stay visible).
-static void logPdDiagnostics() {
-    pdManager.logDiagnostics(powerMonitor.getInputVoltage(),
-                             powerMonitor.getInputCurrent(),
-                             voltageMonitor.getVoltage(),
-                             currentControl.getDigipotStep(),
-                             powerMonitor.getAlertText());
+// Compact system status: PD state plus thermal (no PDManager formatting).
+static void logSystemDiagnostics() {
+    static const char *kStateNames[] = {"DISC", "SETTLE", "REQ", "READY"};
+    const char *inaAlert = powerMonitor.getAlertText();
+    const bool hasInaAlert = (inaAlert != nullptr && inaAlert[0] != '\0');
+    Serial.printf("[PD] st=%s contract=%.1fV/%.2fA opmode=0x%02X msgrlt=%u sticky=0x%02X%s%s%s%s ina=%.2fV/%.2fA out=%.2fV pot=%d temp=%.1fC thlim=%.1fW\n",
+        kStateNames[static_cast<uint8_t>(pdManager.getState())],
+        pdManager.getVoltage(), pdManager.getCurrent(),
+        pdManager.getOpMode(), pdManager.getMsgResult(), pdManager.getStickyStatus(),
+        pdManager.hasChipFault() ? " FAULT:" : "", pdManager.getFaultText(),
+        hasInaAlert ? " INA:" : "", hasInaAlert ? inaAlert : "",
+        powerMonitor.getInputVoltage(), powerMonitor.getInputCurrent(),
+        voltageMonitor.getVoltage(), currentControl.getDigipotStep(),
+        thermalManager.getTemperatureC(), thermalManager.getOutputPowerLimitW());
 }
 
 static void dumpDiagnosticHistory() {
@@ -144,15 +137,13 @@ static void updateEfficiency() {
 
 static PeriodicTask displayTask(100, updateDisplay);
 static PeriodicTask thermalUpdateTask(1000, updateThermal);
-static PeriodicTask thermalLogTask(5000, logThermalStatus);
 // 50ms PD tick for sub-second debounce/timeout constants.
 static PeriodicTask pdUpdateTask(50, updatePd);
 static PeriodicTask voltageUpdateTask(100, updateVoltage);
 static PeriodicTask powerMonitorUpdateTask(50, updatePowerMonitor);
 static PeriodicTask currentUpdateTask(50, updateCurrentControl);
 static PeriodicTask efficiencyUpdateTask(50, updateEfficiency);
-static PeriodicTask noSourceLogTask(1000, logNoSource);
-static PeriodicTask pdDiagTask(2000, logPdDiagnostics);
+static PeriodicTask pdDiagTask(2000, logSystemDiagnostics);
 static PeriodicTask diagHistoryTask(10000, dumpDiagnosticHistory);
 
 void setup() {
@@ -163,7 +154,7 @@ void setup() {
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
     // Digipot powers at mid-scale: force safe step first.
-    currentControl.begin(Wire, voltageMonitor, pdManager);
+    currentControl.begin(Wire, voltageMonitor);
 
     displayManager.begin();
     efficiencyEstimator.begin();
@@ -189,7 +180,6 @@ void loop() {
 
     // Thermal & fan always run, regardless of PD state.
     thermalUpdateTask.tick();
-    thermalLogTask.tick();
 
     powerMonitorUpdateTask.tick();
     pdUpdateTask.tick();
@@ -198,11 +188,12 @@ void loop() {
     pdDiagTask.tick();
     diagHistoryTask.tick();
 
+    if (currentControl.isShutdownLatched()) {
+        pdManager.shutdown();
+    }
+
     if (!pdManager.isReady()) {
         currentControl.safe();
-        if (!pdManager.isAttached()) {
-            noSourceLogTask.tick();
-        }
         return;
     }
 

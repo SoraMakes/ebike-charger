@@ -1,5 +1,4 @@
 #include "CurrentControl.h"
-#include "PDManager.h"
 #include "DiagLog.h"
 
 #include <math.h>
@@ -16,10 +15,9 @@ static constexpr float kCurrentAtStepZeroA   = 0.14f;
 static constexpr float kCurrentPerStepA      = 0.0572f;
 static constexpr float kMaxAllowedOutputAmps = 3.0f;
 
-void CurrentControl::begin(TwoWire &wire, VoltageMonitor &voltageMonitor, PDManager &pdManager) {
+void CurrentControl::begin(TwoWire &wire, VoltageMonitor &voltageMonitor) {
     _wire = &wire;
     _voltageMonitor = &voltageMonitor;
-    _pdManager = &pdManager;
     _lastDigipotStep = -1;
     safe();
 }
@@ -109,7 +107,6 @@ void CurrentControl::requestShutdown(const char *reason) {
     strncpy(_shutdownReason, reason ? reason : "unknown", sizeof(_shutdownReason) - 1);
     _shutdownReason[sizeof(_shutdownReason) - 1] = '\0';
     DiagLog::event("safety %s", _shutdownReason);
-    _pdManager->shutdown();
     safe();
 }
 

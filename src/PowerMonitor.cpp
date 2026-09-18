@@ -46,11 +46,13 @@ float PowerMonitor::getInputVoltage() const { return _busVoltage; }
 float PowerMonitor::getInputCurrent() const { return _current; }
 
 const char *PowerMonitor::getAlertText() const {
-    static char text[20];
+    static char text[32];
     text[0] = '\0';
     if (_alertSticky & (1 << INA238_DIAG_SHUNT_OVER_LIMIT)) { strcat(text, "OCP "); }
+    if (_alertSticky & (1 << INA238_DIAG_SHUNT_UNDER_LIMIT)) { strcat(text, "SHUNT-UV "); }
     if (_alertSticky & (1 << INA238_DIAG_BUS_OVER_LIMIT))   { strcat(text, "OVP "); }
     if (_alertSticky & (1 << INA238_DIAG_BUS_UNDER_LIMIT))  { strcat(text, "UVP "); }
     if (_alertSticky & (1 << INA238_DIAG_TEMP_OVER_LIMIT))  { strcat(text, "OTP "); }
+    if (_alertSticky & (1 << INA238_DIAG_POWER_OVER_LIMIT)) { strcat(text, "PWR-OV "); }
     return text;
 }
