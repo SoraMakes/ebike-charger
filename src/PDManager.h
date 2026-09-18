@@ -19,20 +19,19 @@ public:
 
     // INA238 PD-input voltage (high-voltage VBUS, not 5V aux).
     void setMeasuredInputVoltage(float volts);
-    bool isAttached() const;
     bool isReady() const;
     bool justAttached() const;
-    bool justDetached() const;
     // Contract voltage changed while Ready.
     bool voltageJumped() const;
     float getVoltage() const;
     float getCurrent() const;
     void shutdown();
+    bool isShutdownLatched() const { return _shutdownLatched; }
 
-    // Compact status line (no STATUS read).
-    void logDiagnostics(float inaVoltageV, float inaCurrentA,
-                        float outputVoltageV, int digipotStep,
-                        const char *inaAlertText = "");
+    PDNegotiationState getState() const { return _state; }
+    uint8_t getStickyStatus() const { return _statusSticky; }
+    uint8_t getOpMode() { return _pd.readOpMode(); }
+    uint8_t getMsgResult() { return static_cast<uint8_t>(_pd.readMsgResult() & 0x07); }
     const char *getFaultText() const;
     bool hasChipFault() const;
 
@@ -42,10 +41,10 @@ private:
     // INA below this is sensor failure, not dead input.
     static constexpr float kInputValidMinV = 3.0f;
     static constexpr uint32_t kAttachSettlePollMs = 150;
+    // TODO: evaluate NEWPDO-only Ready recheck, drop 500ms timer if interrupt suffices.
 
     bool requestBestPdo();
     uint8_t findBestFixedPdo() const;
-    bool isSourcePhysicallyPresent();
     void applyStartupConfig();
     uint8_t pollStatus();
     bool attemptRecovery(const char *reason);
@@ -58,18 +57,14 @@ private:
     uint32_t _stateEnteredAt = 0;
     uint32_t _lastStatusPollMs = 0;
     uint32_t _lastPdoPollMs = 0;
-    uint32_t _absentSinceMs = 0;
     uint32_t _contractLostSinceMs = 0;
-    uint8_t _recoveryAttempts = 0;
     uint32_t _lastRecoveryMs = 0;
-    bool _recoveryExhausted = false;
     uint32_t _nextRequestAllowedMs = 0;
 
     float   _voltage = 0.0f;
     float   _current = 0.0f;
 
     bool _justAttached  = false;
-    bool _justDetached  = false;
     bool _voltageJumped = false;
 
     bool _shutdownLatched = false;

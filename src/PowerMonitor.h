@@ -13,7 +13,7 @@ public:
     float getInputCurrent() const;
     bool hasAlert() const { return _alertSticky != 0; }
 
-    /// Tripped alerts ("OCP", "OVP", ...) or "".
+    // Single fault text source: latched INA faults as "OCP "/"OVP "/"UVP "/"OTP "/"SHUNT-UV "/"PWR-OV ".
     const char *getAlertText() const;
 
 private:

@@ -10,19 +10,21 @@ static constexpr uint8_t kFaultMask = UVP_MSK | OVP_MSK | OCP_MSK | OTP_MSK;
 static constexpr uint32_t kNegotiationTimeoutMs = 2000;
 static constexpr uint32_t kProfileRecheckMs = 500;
 static constexpr uint32_t kStatusPollMs = 500;
-static constexpr uint32_t kAbsentConfirmMs = 500;
 // Contract dead when input below 75% of contract (20V->5V is 25%).
 static constexpr float kContractLiveFraction = 0.75f;
 // Low-input dwell before contract declared dead.
 static constexpr uint32_t kContractLostMs = 300;
 static constexpr uint32_t kRecoveryBackoffMs = 2000;
-static constexpr uint8_t kMaxRecoveryAttempts = 5;
 
 bool PDManager::begin(TwoWire &wire, int8_t intPin) {
     _intPin = intPin;
     // INT idles low; floating pin would fake interrupts and eat STATUS.
     pinMode(_intPin, INPUT_PULLDOWN);
-    return _pd.begin(wire);
+    bool ok = _pd.begin(wire);
+    if (ok) {
+        _pd.setOutput(0);
+    }
+    return ok;
 }
 
 // Config written once after STARTED, before first negotiation.
@@ -58,7 +60,7 @@ uint8_t PDManager::pollStatus() {
 
 // Returns e.g. "OCP " or "OVP OTP ": latched AP33772S protections.
 // UVP=input undervoltage, OVP=input overvoltage, OCP=input overcurrent,
-// OTP=chip overtemperature. Latched until re-attach; drives display/log.
+// OTP=chip overtemperature. Latched until reboot; drives display/log.
 const char *PDManager::getFaultText() const {
     static char text[20];
     text[0] = '\0';
@@ -79,36 +81,11 @@ bool PDManager::hasChipFault() const {
     return (_statusSticky & kFaultMask) != 0;
 }
 
-// Compact status line (crucial fields only).
-void PDManager::logDiagnostics(float inaVoltageV, float inaCurrentA,
-                               float outputVoltageV, int digipotStep,
-                               const char *inaAlertText) {
-    static const char *kStateNames[] = {"DISC", "SETTLE", "REQ", "READY"};
-    const uint8_t opMode = _pd.readOpMode();
-    const uint8_t msgRlt = static_cast<uint8_t>(_pd.readMsgResult() & 0x07);
-    const bool hasInaAlert = (inaAlertText != nullptr && inaAlertText[0] != '\0');
-    Serial.printf("[PD] st=%s contract=%.1fV/%.2fA opmode=0x%02X msgrlt=%u sticky=0x%02X%s%s%s%s ina=%.2fV/%.2fA out=%.2fV pot=%d\n",
-        kStateNames[static_cast<uint8_t>(_state)],
-        _voltage, _current,
-        opMode, msgRlt, _statusSticky,
-        hasChipFault() ? " FAULT:" : "", getFaultText(),
-        hasInaAlert ? " INA:" : "", hasInaAlert ? inaAlertText : "",
-        inaVoltageV, inaCurrentA, outputVoltageV, digipotStep);
-}
-
-bool PDManager::isSourcePhysicallyPresent() {
-    if ((_pd.readOpMode() & kOpModeSourceMask) != 0) {
-        return true;
-    }
-    // OPMODE unset before settle; fall back to PD input volts.
-    return _inputValid && (_inputVoltageV >= kInputValidMinV);
-}
-
 void PDManager::update() {
     _justAttached = false;
-    _justDetached = false;
     _voltageJumped = false;
     if (_shutdownLatched) {
+        _pd.setOutput(0);
         return;
     }
 
@@ -131,32 +108,8 @@ void PDManager::update() {
         _lastStatus = status;
     }
 
-    // Sustained absence only; ignore dips during voltage transitions.
-    if (_state != PDNegotiationState::Disconnected) {
-        if (!isSourcePhysicallyPresent()) {
-            if (_absentSinceMs == 0) {
-                _absentSinceMs = millis();
-            }
-            if (millis() - _absentSinceMs >= kAbsentConfirmMs) {
-                if (_state == PDNegotiationState::Ready) {
-                    _justDetached = true;
-                }
-                _state = PDNegotiationState::Disconnected;
-                _voltage = 0.0f;
-                _current = 0.0f;
-                _absentSinceMs = 0;
-                _configured = false;
-                _contractLostSinceMs = 0;
-                _recoveryAttempts = 0;
-                _recoveryExhausted = false;
-                _lastPdoPollMs = 0;
-                return;
-            }
-        } else {
-            _absentSinceMs = 0;
-        }
-    }
-
+    // No detach path: full VBUS loss reboots the MCU (boot-only
+    // Disconnected). Sags while alive use the contract-lost path in Ready.
     // Chip restarted underneath us: re-apply config, recover contract.
     if ((status & STARTED_MSK) && _state != PDNegotiationState::Disconnected) {
         _configured = false;
@@ -181,6 +134,7 @@ void PDManager::update() {
             const bool sourceDetected = (opMode & kOpModeSourceMask) != 0;
             if (chipStarted || sourceDetected) {
                 applyStartupConfig();
+                _pd.setOutput(1);
                 _state = PDNegotiationState::AttachSettle;
                 _stateEnteredAt = millis();
                 _lastPdoPollMs = 0;
@@ -234,8 +188,7 @@ void PDManager::update() {
                 if (grantedIreqMa > 0) { _current = grantedIreqMa / 1000.0f; }
                 _justAttached = true;
                 _contractLostSinceMs = 0;
-                _recoveryAttempts = 0;
-                _recoveryExhausted = false;
+                _pd.setOutput(1);
                 DiagLog::event("contract %.0fV %.1fA", _voltage, _current);
             } else if (millis() - _stateEnteredAt >= kNegotiationTimeoutMs) {
                 _state = PDNegotiationState::AttachSettle;
@@ -256,8 +209,6 @@ void PDManager::update() {
                 }
             } else {
                 _contractLostSinceMs = 0;
-                _recoveryAttempts = 0;
-                _recoveryExhausted = false;
             }
             const bool dueForRecheck = (status & NEWPDO_MSK) || (millis() - _stateEnteredAt >= kProfileRecheckMs);
             if (!dueForRecheck) {
@@ -281,21 +232,13 @@ void PDManager::update() {
     }
 }
 
-// Fresh PD_REQMSG after trip/restart/loss (bounded, rate-limited).
+// Fresh PD_REQMSG after trip/restart/loss (rate-limited, unbounded).
 bool PDManager::attemptRecovery(const char *reason) {
-    if (_recoveryExhausted) {
-        return false;
-    }
+    (void)reason;
     if (_lastRecoveryMs != 0 && millis() - _lastRecoveryMs < kRecoveryBackoffMs) {
         return false;
     }
     _lastRecoveryMs = millis();
-    ++_recoveryAttempts;
-    if (_recoveryAttempts > kMaxRecoveryAttempts) {
-        _recoveryExhausted = true;
-        DiagLog::event("safety giveup %s", reason);
-        return false;
-    }
     _voltageJumped = true;
     _contractLostSinceMs = 0;
     _pd.refreshPdoTable();
@@ -347,20 +290,12 @@ uint8_t PDManager::findBestFixedPdo() const {
     return bestPdo;
 }
 
-bool PDManager::isAttached() const {
-    return !_shutdownLatched && _state != PDNegotiationState::Disconnected;
-}
-
 bool PDManager::isReady() const {
     return !_shutdownLatched && _state == PDNegotiationState::Ready;
 }
 
 bool PDManager::justAttached() const {
     return _justAttached;
-}
-
-bool PDManager::justDetached() const {
-    return _justDetached;
 }
 
 bool PDManager::voltageJumped() const {
@@ -380,8 +315,6 @@ void PDManager::shutdown() {
         return;
     }
     _shutdownLatched = true;
-    _voltage = 0.0f;
-    _current = 0.0f;
-    _state = PDNegotiationState::Disconnected;
+    _pd.setOutput(0);
     DiagLog::event("safety pd off");
 }

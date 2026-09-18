@@ -4,12 +4,10 @@
 #include <Wire.h>
 #include "VoltageMonitor.h"
 
-class PDManager;
-
 /// Regulator charge-current setpoint via digipot.
 class CurrentControl {
 public:
-    void begin(TwoWire &wire, VoltageMonitor &voltageMonitor, PDManager &pdManager);
+    void begin(TwoWire &wire, VoltageMonitor &voltageMonitor);
 
     /// Upper output-power bound at latest output voltage.
     void update(float limitWatts);
@@ -38,7 +36,6 @@ public:
 private:
     TwoWire *_wire         = nullptr;
     VoltageMonitor *_voltageMonitor = nullptr;
-    PDManager *_pdManager  = nullptr;
     int16_t  _powerLevel   = -1;
     int16_t  _targetLevel  = -1;
     int16_t  _lastDigipotStep = -1;
