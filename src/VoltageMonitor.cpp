@@ -1,5 +1,5 @@
 #include "VoltageMonitor.h"
-#include "CurrentControl.h"
+#include "PDManager.h"
 
 static constexpr float kShutdownVoltageV = 42.5f;
 
@@ -11,9 +11,9 @@ static constexpr float kAdcResolution       = 4096.0f;
 static constexpr float kVoltageCalibrationGain   = 0.854f;
 static constexpr float kVoltageCalibrationOffset = 1.73636f;
 
-void VoltageMonitor::begin(uint8_t adcPin, CurrentControl &currentControl) {
+void VoltageMonitor::begin(uint8_t adcPin, PDManager &pdManager) {
     _adcPin = adcPin;
-    _currentControl = &currentControl;
+    _pdManager = &pdManager;
     pinMode(_adcPin, INPUT);
     // ESP32: no internal voltage divider.
     analogSetPinAttenuation(_adcPin, ADC_0db);
@@ -49,7 +49,7 @@ void VoltageMonitor::update() {
     const bool overVoltage = _voltageV >= kShutdownVoltageV;
     _overvoltageCount = overVoltage ? _overvoltageCount + 1 : 0;
     if (_overvoltageCount >= kOvervoltageRequiredSamples) {
-        _currentControl->requestShutdown("overvoltage");
+        _pdManager->shutdown("overvoltage");
     }
 }
 

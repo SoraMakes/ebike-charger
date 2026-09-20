@@ -9,26 +9,19 @@ class CurrentControl {
 public:
     void begin(TwoWire &wire, VoltageMonitor &voltageMonitor);
 
-    /// Output-power bound; noLoad holds the setpoint low until load rises.
-    void update(float limitWatts, bool noLoad);
+    /// Upper output-power bound at latest output voltage.
+    void update(float limitWatts);
 
-    /// Disable output, digipot to step 0.
-    void safe();
+    /// Drop to minimum-current setpoint, digipot to step 0 (~0.14 A).
+    /// Does NOT turn the output off: no VR enable exists, step 0 still
+    /// sources ~0.14 A. Permanent cut-out is PDManager::shutdown().
+    void minimumCurrent();
 
-    /// Latch permanent shutdown with reason.
-    void requestShutdown(const char *reason);
-
-    /// Configured current limit, 0 when disabled.
+    /// Configured current limit; floor is step 0 (~0.14 A), never 0.
     float getCurrentLimitA() const;
 
-    /// True once setpoint reached its target.
+    /// True once setpoint reached its target (also true when parked at 0).
     bool isRampUpFinished() const;
-
-    /// True after permanent shutdown.
-    bool isShutdownLatched() const;
-
-    /// Shutdown reason.
-    const char *getShutdownReason() const;
 
     /// Last digipot step written (-1 before first write).
     int16_t getDigipotStep() const { return _lastDigipotStep; }
@@ -36,12 +29,10 @@ public:
 private:
     TwoWire *_wire         = nullptr;
     VoltageMonitor *_voltageMonitor = nullptr;
-    int16_t  _powerLevel   = -1;
-    int16_t  _targetLevel  = -1;
+    int16_t  _powerLevel   = 0;
+    int16_t  _targetLevel  = 0;
     int16_t  _lastDigipotStep = -1;
-    uint32_t _lastStepChangeAt = 0;
-    bool     _shutdownLatched = false;
-    char     _shutdownReason[17] = "";
+    uint32_t _lastIncreaseAt = 0;
 
     void    writeDigipot(uint8_t step);
     static int16_t ampsToStep(float amps);

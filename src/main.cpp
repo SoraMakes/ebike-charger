@@ -75,11 +75,11 @@ static void updatePd() {
     pdManager.update();
 
     if (pdManager.voltageJumped()) {
-        currentControl.safe();
+        currentControl.minimumCurrent();
     }
 
     if (pdManager.justAttached()) {
-        currentControl.safe();
+        currentControl.minimumCurrent();
     }
 }
 
@@ -159,20 +159,21 @@ void setup() {
 
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
-    // Digipot powers at mid-scale: force safe step first.
+    // Digipot powers at mid-scale: force minimum-current step first.
     currentControl.begin(Wire, voltageMonitor);
 
     displayManager.begin();
     efficiencyEstimator.begin();
 
-    voltageMonitor.begin(33, currentControl);  // voltage-divider ADC input
-    if (!thermalManager.begin(Wire, kFanPin, currentControl)) {
-        DiagLog::event("safety temp sensor");
-    }
-
+    // PDManager first: shutdown targets must exist before sensors can latch.
     while (!pdManager.begin(Wire, kPdIntPin)) {
         displayManager.showMessage("PD controller\nnot found!");
         delay(2000);
+    }
+
+    voltageMonitor.begin(33, pdManager);  // voltage-divider ADC input
+    if (!thermalManager.begin(Wire, kFanPin, pdManager)) {
+        DiagLog::event("safety temp sensor");
     }
 
     if (!powerMonitor.begin()) {
@@ -194,19 +195,20 @@ void loop() {
     pdDiagTask.tick();
     diagHistoryTask.tick();
 
-    if (currentControl.isShutdownLatched()) {
-        pdManager.shutdown();
+    if (pdManager.isShutdownLatched()) {
+        currentControl.minimumCurrent();
+        return;
     }
 
     if (!pdManager.isReady()) {
-        currentControl.safe();
+        currentControl.minimumCurrent();
         return;
     }
 
     const float voltage = pdManager.getVoltage();
 
     if (voltage < kMinChargeVoltage) {
-        currentControl.safe();
+        currentControl.minimumCurrent();
         return;
     }
 

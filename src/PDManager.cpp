@@ -310,11 +310,13 @@ float PDManager::getCurrent() const {
     return _current;
 }
 
-void PDManager::shutdown() {
+void PDManager::shutdown(const char *reason) {
     if (_shutdownLatched) {
         return;
     }
     _shutdownLatched = true;
+    strncpy(_shutdownReason, reason ? reason : "unknown", sizeof(_shutdownReason) - 1);
+    _shutdownReason[sizeof(_shutdownReason) - 1] = '\0';
     _pd.setOutput(0);
-    DiagLog::event("safety pd off");
+    DiagLog::event("safety %s", _shutdownReason);
 }
