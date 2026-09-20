@@ -28,6 +28,7 @@ static DisplayManager displayManager;
 static EfficiencyEstimator efficiencyEstimator;
 
 static constexpr float kElectronicsPowerW          = 2.0f;  // esp, sensors, fan  (measured: 1W over USB, fan 100%, no INA, no output current sensor)
+static constexpr float kNoLoadInputW               = 5.0f;  // wall-input floor below which the load is treated as absent
 
 // A periodic task owns its interval, timestamp, and the action to run once due.
 // Unsigned subtraction remains safe across the millis() rollover.
@@ -117,8 +118,10 @@ static void updateCurrentControl() {
     const float pdOutputPowerLimit = calculateOutputPowerLimit(pdPowerLimit);
     const float thermalOutputPowerLimit = thermalManager.getOutputPowerLimitW();
     const float outputPowerLimit = min(pdOutputPowerLimit, thermalOutputPowerLimit);
+    const float actualInputPowerW = inputVoltageV * powerMonitor.getInputCurrent();
+    const bool noLoad = actualInputPowerW < kNoLoadInputW;
 
-    currentControl.update(outputPowerLimit);
+    currentControl.update(outputPowerLimit, noLoad);
 }
 
 // Feeds the efficiency estimator with the allowed vs. measured input power.
@@ -128,9 +131,12 @@ static void updateEfficiency() {
     const float allowedInputPowerW = pdManager.getCurrent() * inputVoltageV;
     const float actualInputPowerW  = inputVoltageV * powerMonitor.getInputCurrent();
 
+    const bool noLoad = actualInputPowerW < kNoLoadInputW;
+
     efficiencyEstimator.update(allowedInputPowerW - kElectronicsPowerW,
                                actualInputPowerW  - kElectronicsPowerW,
-                               currentControl.isRampUpFinished());
+                               currentControl.isRampUpFinished(),
+                               noLoad);
 }
 
 // --- Task table: interval and action defined together ------------------------

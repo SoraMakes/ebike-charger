@@ -14,6 +14,9 @@ static constexpr float kCurrentAtStepZeroA   = 0.14f;
 static constexpr float kCurrentPerStepA      = 0.0572f;
 static constexpr float kMaxAllowedOutputAmps = 3.0f;
 
+// No-load hold step (~0.37A).
+static constexpr int16_t kNoLoadHoldStep = 4;
+
 void CurrentControl::begin(TwoWire &wire, VoltageMonitor &voltageMonitor) {
     _wire = &wire;
     _voltageMonitor = &voltageMonitor;
@@ -21,11 +24,11 @@ void CurrentControl::begin(TwoWire &wire, VoltageMonitor &voltageMonitor) {
     minimumCurrent();
 }
 
-void CurrentControl::update(float limitWatts) {
+void CurrentControl::update(float limitWatts, bool noLoad) {
     const uint32_t now = millis();
     const float outputVoltageV = _voltageMonitor->getVoltage();
 
-    if (limitWatts <= 0.0f || !isfinite(outputVoltageV) || outputVoltageV <= 0.0f) {
+    if (limitWatts <= 0.0f || outputVoltageV <= 0.0f) {
         minimumCurrent();
         return;
     }
@@ -35,6 +38,14 @@ void CurrentControl::update(float limitWatts) {
     const int16_t targetLevel = ampsToStep(currentLimitA);
     _targetLevel = targetLevel;
 
+    // No-load: hold low setpoint until load rises.
+    if (noLoad && targetLevel > kNoLoadHoldStep) {
+        _powerLevel = kNoLoadHoldStep;
+        _lastStepChangeAt = now;
+        writeDigipot(static_cast<uint8_t>(kNoLoadHoldStep));
+        return;
+    }
+
     const int16_t acceleratedTarget = max(
         static_cast<int16_t>(0),
         static_cast<int16_t>(targetLevel - kFinalRampSteps)
@@ -43,8 +54,8 @@ void CurrentControl::update(float limitWatts) {
     if (_powerLevel > targetLevel) {
         _powerLevel = targetLevel;
     } else if (_powerLevel < targetLevel) {
-        if (now - _lastIncreaseAt >= kIncreaseIntervalMs) {
-            _lastIncreaseAt = now;
+        if (now - _lastStepChangeAt >= kIncreaseIntervalMs) {
+            _lastStepChangeAt = now;
 
             if (_powerLevel < acceleratedTarget) {
                 const int16_t stepsPerIncrease = max(
@@ -68,7 +79,7 @@ void CurrentControl::update(float limitWatts) {
 void CurrentControl::minimumCurrent() {
     _powerLevel = 0;
     _targetLevel = 0;
-    _lastIncreaseAt = millis();
+    _lastStepChangeAt = millis();
     writeDigipot(0);
 }
 

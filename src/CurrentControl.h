@@ -9,8 +9,8 @@ class CurrentControl {
 public:
     void begin(TwoWire &wire, VoltageMonitor &voltageMonitor);
 
-    /// Upper output-power bound at latest output voltage.
-    void update(float limitWatts);
+    /// Output-power bound; noLoad holds the setpoint low until load rises.
+    void update(float limitWatts, bool noLoad);
 
     /// Drop to minimum-current setpoint, digipot to step 0 (~0.14 A).
     /// Does NOT turn the output off: no VR enable exists, step 0 still
@@ -32,7 +32,7 @@ private:
     int16_t  _powerLevel   = 0;
     int16_t  _targetLevel  = 0;
     int16_t  _lastDigipotStep = -1;
-    uint32_t _lastIncreaseAt = 0;
+    uint32_t _lastStepChangeAt = 0;
 
     void    writeDigipot(uint8_t step);
     static int16_t ampsToStep(float amps);
