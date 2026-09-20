@@ -6,7 +6,8 @@
 class EfficiencyEstimator {
 public:
     void begin();
-    void update(float allowedRegulatorInputW, float actualRegulatorInputW, bool rampUpFinished);
+    void update(float allowedRegulatorInputW, float actualRegulatorInputW,
+                bool rampUpFinished, bool noLoad);
     float getEfficiency() const;
 
 private:

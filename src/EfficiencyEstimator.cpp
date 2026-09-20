@@ -1,17 +1,18 @@
 #include "EfficiencyEstimator.h"
 
-#include <math.h>
-
 void EfficiencyEstimator::begin() {
     _efficiency = kDefaultEfficiency;
 }
 
 void EfficiencyEstimator::update(float allowedRegulatorInputW, float actualRegulatorInputW,
-                                 bool rampUpFinished) {
-    if (!isfinite(actualRegulatorInputW) || actualRegulatorInputW <= 0.0f) {
+                                 bool rampUpFinished, bool noLoad) {
+    if (allowedRegulatorInputW <= 0.0f) {
         return;
     }
-    if (!isfinite(allowedRegulatorInputW) || allowedRegulatorInputW <= 0.0f) {
+
+    // No-load: hold minimum so the budget is not inflated.
+    if (noLoad) {
+        _efficiency = kMinEfficiency;
         return;
     }
 

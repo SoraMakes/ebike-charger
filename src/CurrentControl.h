@@ -9,8 +9,8 @@ class CurrentControl {
 public:
     void begin(TwoWire &wire, VoltageMonitor &voltageMonitor);
 
-    /// Upper output-power bound at latest output voltage.
-    void update(float limitWatts);
+    /// Output-power bound; noLoad holds the setpoint low until load rises.
+    void update(float limitWatts, bool noLoad);
 
     /// Disable output, digipot to step 0.
     void safe();
@@ -39,7 +39,7 @@ private:
     int16_t  _powerLevel   = -1;
     int16_t  _targetLevel  = -1;
     int16_t  _lastDigipotStep = -1;
-    uint32_t _lastIncreaseAt = 0;
+    uint32_t _lastStepChangeAt = 0;
     bool     _shutdownLatched = false;
     char     _shutdownReason[17] = "";
 
