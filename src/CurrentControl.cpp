@@ -28,7 +28,7 @@ void CurrentControl::update(float limitWatts, bool noLoad) {
     const uint32_t now = millis();
     const float outputVoltageV = _voltageMonitor->getVoltage();
 
-    if (limitWatts <= 0.0f || outputVoltageV <= 0.0f) {
+    if (limitWatts <= 0.0f || !isfinite(outputVoltageV) || outputVoltageV <= 0.0f) {
         minimumCurrent();
         return;
     }

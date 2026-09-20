@@ -177,7 +177,8 @@ void setup() {
     }
 
     if (!powerMonitor.begin()) {
-        DiagLog::event("safety ina missing");
+        // INA is rail truth; without it negotiation would run blind.
+        pdManager.shutdown("ina missing");
     }
 }
 
