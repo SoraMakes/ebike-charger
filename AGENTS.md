@@ -36,7 +36,7 @@ Settings live in `platformio.ini`.
 - Add periodic work as `PeriodicTask(intervalMs, fn)` in `main.cpp`.
   `millis()` subtraction is rollover-safe.
 - Keep managers decoupled; `main.cpp` wires them. No cross-includes between managers.
-- Latch permanent faults via `PDManager::shutdown()` / `DiagLog::event()`, never
+- Latch permanent faults via `requestShutdown()` / `DiagLog::event()`, never
   silently continue.
 - Comments are for a future educated reader: short, precise, WHAT not HOW.
   No task or progress references.
