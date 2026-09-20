@@ -68,8 +68,8 @@ void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
     _tft.drawString("Temp: " + String(tempC, 1) + "C " + String(efficiencyPct, 0) + "%", 5, 95);
 
     // Bottom line: shutdown, chip fault, INA alert.
-    if (current.isShutdownLatched()) {
-        _tft.drawString("STOP: " + String(current.getShutdownReason()) + "      ", 5, 118);
+    if (pd.isShutdownLatched()) {
+        _tft.drawString("STOP: " + String(pd.getShutdownReason()) + "      ", 5, 118);
     } else if (pd.hasChipFault()) {
         _tft.drawString("PD FAULT: " + String(pd.getFaultText()) + "     ", 5, 118);
     } else if (power.hasAlert()) {

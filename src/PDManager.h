@@ -25,8 +25,11 @@ public:
     bool voltageJumped() const;
     float getVoltage() const;
     float getCurrent() const;
-    void shutdown();
+    /// Latch permanent cut-out (VOUT MOS off) with reason.
+    void shutdown(const char *reason = nullptr);
     bool isShutdownLatched() const { return _shutdownLatched; }
+    /// Shutdown reason.
+    const char *getShutdownReason() const { return _shutdownReason; }
 
     PDNegotiationState getState() const { return _state; }
     uint8_t getStickyStatus() const { return _statusSticky; }
@@ -68,6 +71,7 @@ private:
     bool _voltageJumped = false;
 
     bool _shutdownLatched = false;
+    char _shutdownReason[17] = "";
     bool _configured      = false;
 
     // Bit0=CC legacy, bit1=PD source (AP33772S OPMODE).

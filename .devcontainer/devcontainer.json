@@ -6,8 +6,7 @@
   "remoteUser": "vscode",
   "mounts": [
     "source=${localWorkspaceFolder}/..,target=/home/markus/projects,type=bind,readonly,consistency=cached",
-    // Nested rw mount: worktree gitdir lives in the main repo's .git, which git
-    // must write to. Deeper target wins over the read-only parent above.
+    // Nested rw mount: worktree gitdir lives in the main repo's .git, which git must write to.
     "source=${localEnv:HOME}/projects/charger_claude/.git,target=/home/markus/projects/charger_claude/.git,type=bind,consistency=cached",
     // Shares AGENTS.md, opencode.jsonc (MCP servers, agents) and key files.
     "source=${localEnv:HOME}/.config/opencode,target=/home/vscode/.config/opencode,type=bind,consistency=cached",

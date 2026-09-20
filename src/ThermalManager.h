@@ -4,12 +4,12 @@
 #include <Wire.h>
 #include <Adafruit_BMP280.h>
 
-class CurrentControl;
+class PDManager;
 
 /// Temperature sensing plus fan and thermal power limit.
 class ThermalManager {
 public:
-    bool begin(TwoWire &wire, uint8_t fanPin, CurrentControl &currentControl);
+    bool begin(TwoWire &wire, uint8_t fanPin, PDManager &pdManager);
     void update();
     float getTemperatureC() const;
     float getOutputPowerLimitW() const;
@@ -26,7 +26,7 @@ private:
     float _outputPowerLimitW = 0.0f;
     bool _sensorFault = true;
     bool _shutdownLatched = false;
-    CurrentControl *_currentControl = nullptr;
+    PDManager *_pdManager = nullptr;
 
     void applyFanPwm(uint16_t duty) const;
     void enterShutdown(const char *reason);

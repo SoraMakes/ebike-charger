@@ -1,5 +1,4 @@
 #include "CurrentControl.h"
-#include "DiagLog.h"
 
 #include <math.h>
 
@@ -19,20 +18,15 @@ void CurrentControl::begin(TwoWire &wire, VoltageMonitor &voltageMonitor) {
     _wire = &wire;
     _voltageMonitor = &voltageMonitor;
     _lastDigipotStep = -1;
-    safe();
+    minimumCurrent();
 }
 
 void CurrentControl::update(float limitWatts) {
-    if (_shutdownLatched) {
-        safe();
-        return;
-    }
-
     const uint32_t now = millis();
     const float outputVoltageV = _voltageMonitor->getVoltage();
 
     if (limitWatts <= 0.0f || !isfinite(outputVoltageV) || outputVoltageV <= 0.0f) {
-        safe();
+        minimumCurrent();
         return;
     }
 
@@ -40,11 +34,6 @@ void CurrentControl::update(float limitWatts) {
     const float currentLimitA = min(targetAmps, kMaxAllowedOutputAmps);
     const int16_t targetLevel = ampsToStep(currentLimitA);
     _targetLevel = targetLevel;
-
-    if (targetLevel < 0) {
-        safe();
-        return;
-    }
 
     const int16_t acceleratedTarget = max(
         static_cast<int16_t>(0),
@@ -73,49 +62,22 @@ void CurrentControl::update(float limitWatts) {
         }
     }
 
-    // -1 disabled; step 0 is the safe digipot value.
-    const uint8_t step = _powerLevel < 0
-        ? 0
-        : static_cast<uint8_t>(_powerLevel);
-    writeDigipot(step);
+    writeDigipot(static_cast<uint8_t>(_powerLevel));
 }
 
-void CurrentControl::safe() {
-    _powerLevel = -1;
-    _targetLevel = -1;
+void CurrentControl::minimumCurrent() {
+    _powerLevel = 0;
+    _targetLevel = 0;
     _lastIncreaseAt = millis();
     writeDigipot(0);
 }
 
 float CurrentControl::getCurrentLimitA() const {
-    if (_powerLevel < 0) {
-        return 0.0f;
-    }
     return kCurrentAtStepZeroA + static_cast<float>(_powerLevel) * kCurrentPerStepA;
 }
 
 bool CurrentControl::isRampUpFinished() const {
-    return _powerLevel >= 0 && _powerLevel >= _targetLevel;
-}
-
-void CurrentControl::requestShutdown(const char *reason) {
-    if (_shutdownLatched) {
-        return;
-    }
-
-    _shutdownLatched = true;
-    strncpy(_shutdownReason, reason ? reason : "unknown", sizeof(_shutdownReason) - 1);
-    _shutdownReason[sizeof(_shutdownReason) - 1] = '\0';
-    DiagLog::event("safety %s", _shutdownReason);
-    safe();
-}
-
-bool CurrentControl::isShutdownLatched() const {
-    return _shutdownLatched;
-}
-
-const char *CurrentControl::getShutdownReason() const {
-    return _shutdownReason;
+    return _powerLevel >= _targetLevel;
 }
 
 void CurrentControl::writeDigipot(uint8_t step) {
@@ -132,10 +94,6 @@ void CurrentControl::writeDigipot(uint8_t step) {
 
 int16_t CurrentControl::ampsToStep(float amps) {
     const float clampedAmps = constrain(amps, 0.0f, kMaxAllowedOutputAmps);
-
-    if (clampedAmps < kCurrentAtStepZeroA) {
-        return -1;
-    }
 
     const float step = (clampedAmps - kCurrentAtStepZeroA) / kCurrentPerStepA;
     return static_cast<int16_t>(constrain(

@@ -1,5 +1,5 @@
 #include "ThermalManager.h"
-#include "CurrentControl.h"
+#include "PDManager.h"
 #include "DiagLog.h"
 
 static constexpr float kFanMinimumTemperatureC = 32.0f;
@@ -15,9 +15,9 @@ static constexpr uint16_t kFanFullDuty = kPwmRange;
 // ESP32 LEDC channel used for the fan PWM.
 static constexpr uint8_t kFanLedcChannel = 0;
 
-bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin, CurrentControl &currentControl) {
+bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin, PDManager &pdManager) {
     _fanPin = fanPin;
-    _currentControl = &currentControl;
+    _pdManager = &pdManager;
     // ESP32: configure the LEDC PWM peripheral for the fan.
     const uint32_t configuredFrequency = ledcSetup(kFanLedcChannel, kFanPwmFrequencyHz, 10);
     if (configuredFrequency == 0) {
@@ -106,5 +106,5 @@ void ThermalManager::enterShutdown(const char *reason) {
     _shutdownLatched = true;
     _outputPowerLimitW = 0.0f;
     applyFanPwm(kFanFullDuty);
-    _currentControl->requestShutdown(reason);
+    _pdManager->shutdown(reason);
 }

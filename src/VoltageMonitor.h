@@ -2,12 +2,12 @@
 
 #include <Arduino.h>
 
-class CurrentControl;
+class PDManager;
 
 /// Output voltage via analog divider.
 class VoltageMonitor {
 public:
-    void begin(uint8_t adcPin, CurrentControl &currentControl);
+    void begin(uint8_t adcPin, PDManager &pdManager);
     void update();
     float getVoltage() const;
 
@@ -22,5 +22,5 @@ private:
     int     _rawReading = 0;
     float   _voltageV   = 0.0f;
     uint8_t _overvoltageCount = 0;
-    CurrentControl *_currentControl = nullptr;
+    PDManager *_pdManager = nullptr;
 };

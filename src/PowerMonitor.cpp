@@ -46,7 +46,7 @@ float PowerMonitor::getInputVoltage() const { return _busVoltage; }
 float PowerMonitor::getInputCurrent() const { return _current; }
 
 const char *PowerMonitor::getAlertText() const {
-    static char text[32];
+    static char text[33];
     text[0] = '\0';
     if (_alertSticky & (1 << INA238_DIAG_SHUNT_OVER_LIMIT)) { strcat(text, "OCP "); }
     if (_alertSticky & (1 << INA238_DIAG_SHUNT_UNDER_LIMIT)) { strcat(text, "SHUNT-UV "); }
