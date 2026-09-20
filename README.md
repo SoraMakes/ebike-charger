@@ -22,7 +22,7 @@ The serial monitor uses **115200 baud**. The required libraries are declared in
 
 | Function | GPIO | Notes |
 |---|---|---|
-| I2C SDA | 21 | Shared bus: HUSB238, AHT10, MCP4018, INA219 |
+| I2C SDA | 21 | Shared bus: AP33772S, AHT10, MCP4018, INA219 |
 | I2C SCL | 22 | Shared bus |
 | Voltage divider (ADC) | 33 | ADC1 input; measures charger output voltage |
 | PD INT | 13 | PD trigger board (RotoPD Pro) interrupt output |
