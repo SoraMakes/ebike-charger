@@ -9,6 +9,335 @@ source, the datasheet text, or build artifacts. Statements marked *inferred* are
 was not measured on hardware. Statements marked *refuted* were checked and found wrong — they are
 kept deliberately, so the same wrong idea is not re-derived.
 
+> **READ §0 FIRST.** A second hardware test round (2026-09-01, later the same day) refuted the
+> primary mechanism recorded in §3.1 and found the real one. A third round (2026-09-02) found a
+> further, independent fault — the INA238 hardware circuit breaker tripping on inrush (§0.8).
+> Sections 3, 5, 7 and 9 were written before that and still contain reasoning that treats register
+> `0x11` as an authoritative VOUT measurement. It is not. §0 says what superseded what.
+
+---
+
+## 0. Update — second test round (2026-09-01, later)
+
+The firmware from the first round was built and run on hardware across five supplies and two
+cables. Two things came out of it: the §3.1 mechanism is **refuted**, and the real blocker is a
+sensor that does not measure what the code believed.
+
+### 0.1 Register `0x11` does not track the PD rail on this board (*verified on hardware*)
+
+The datasheet defines `0x11` as VOUT at 80 mV/LSB (§4.1, guide `:2358`), and the scaling is right.
+But on this board the node it reports is **not** the PD rail:
+
+| Observation | Value |
+|---|---|
+| `0x11` while a 20 V contract is active and `ina=20.12V` on the same rail | **4.96 V** (raw 62, jitter 61/62/63) |
+| `0x11` from a 5 V-only source | **4.7 V** |
+
+The 4.7 V is the decisive one: that is **dropout**, the signature of a regulated 5 V rail whose
+input has fallen to 5 V. Real VOUT would read ~5.0 V in both cases. Whatever `0x11` is on, it
+behaves like the RotoPD Pro's always-on 5 V output.
+
+**Consequence — this, not §3.1, is what the firmware was doing.** Every threshold built on `0x11`
+was a constant:
+
+| Site | Test | Actual behaviour |
+|---|---|---|
+| `PDManager.cpp` `voutArrived` | VOUT ≥ 0.75 × contract | **false for any contract > 6.6 V** |
+| `PDManager.cpp` Ready liveness | VOUT < 0.75 × contract | **always true** |
+| `isOutputEnabled()` | VOUT ≥ 1 V | always true |
+| `isSourcePhysicallyPresent()` fallback | VOUT ≥ 3 V | always true → **the whole function returned true unconditionally, so detach could never be detected at all** |
+
+So the firmware **could not accept or hold any contract above 6.6 V, on any supply, with any
+cable.** It looped `Requesting` → 2 s timeout → re-request forever, at the 2.400 s period visible
+in the captured log. This is not PSU-specific; the §2 failure report's PSU-specificity belongs to
+the *power* problem in §0.3, which is a separate fault that happened to be observed on the same
+supply.
+
+**Fixed:** all of the above now read an INA238 measurement injected via
+`PDManager::setMeasuredRailVoltage()`. See §0.5.
+
+### 0.2 §3.1 is refuted; the `ina=` / `0x11` question in §1 is resolved
+
+The unconfirmed fact in §1 — whether the INA238 taps VBUS or VOUT — is answered by the
+disagreement itself: `ina=20.12V` steady while `0x11` reads 4.96 V, with `msgrlt=1` (success) and
+`VREQ=20.00V`. **The source granted 20 V.** The contract did not collapse to vSafe5V. §3.1's
+"contract collapses back to vSafe5V with the MOS still closed" is *refuted*: nothing collapsed, the
+firmware simply never accepted the contract.
+
+One measurement is still open (§0.6): whether the VOUT MOS is nonetheless open.
+
+### 0.3 The reboot loop is a 5 V transient, and it is fixed by capacitance (*verified on hardware*)
+
+Corrected hardware topology (*user-supplied, supersedes §1's "Power domains"*):
+
+> The RotoPD Pro has **two** outputs: the switchable main PD output, and an **always-on 5 V output
+> rated 0.4 A continuous / 1 A peak**. That 5 V feeds the ESP board; the ESP's own LDO makes 3V3;
+> that 3V3 is fed **back** to the RotoPD Pro's 3V3 input to power its I²C logic.
+
+Measured constant draw is ~0.5 W (100 mA at 5 V) with the fan at 55 %, so there is **no continuous
+overload**. The failure is a **peak**.
+
+Three pieces of evidence, all from hardware:
+
+1. **Warm-swap test.** Cold-start into the worst Ugreen port → constant reboot loop. Connect to a
+   working port first, wait a few seconds, then move to the bad port within seconds → **works**.
+   Unplug, wait longer, replug → broken again. The board fully powers down during the swap (ESP and
+   PD board both), so the *only* thing carried over is capacitor charge.
+2. **A 100 µF cap held to +5 V makes it reliable.** (Held by hand on ~10 cm of wire, so not yet a
+   permanent fix, and not yet statistically tested.)
+3. **Crash signature.** On the worst port the screen paints partially — a third, sometimes half —
+   always stopping at a *different* point, and that partial frame persists a few hundred ms before
+   a full reset. The ST7789 holds its framebuffer while the ESP is gone.
+
+**Sizing tells us the shape of the transient.** 100 µF over 1 V of allowed sag is ~100 µs at 1 A or
+~1 ms at 100 mA. So the killer event is **short and sharp** — consistent with ESP32 boot bursts and
+the ST7789 init, and it effectively **rules out fan rotor stall**, which would need tens of
+thousands of µF. A user test with the fan at 0 % was "subjectively less bad, could not objectively
+confirm"; that reading is now explained.
+
+### 0.4 The MCP4018 mid-scale power-up is *refuted* as the cause of the 42 V spike
+
+§3.3 and §3.4 blame the digipot's mid-scale (~step 63, ~3.7 A) power-up for the output spike. That
+is wrong for a **cold** start, and the datasheet says why: `VSELMIN` defaults to 5000 mV (guide
+`:2481`), and in auto mode the MOS closes as soon as VREQ ≥ VSELMIN. So at cold start VOUT goes
+live at **5 V**, before the ESP leaves the bootloader — and the VR is a boost with an ~8.5 V floor,
+so it can do nothing with 5 V whatever the digipot says. `currentControl.begin()` (`main.cpp:204`)
+also runs before `pdManager.begin()`, so the digipot is already at step 0 well before 20 V arrives.
+
+Additional user-supplied refutation: the previous board revision used the **same VR and the same
+digipot** with no output-disable at all, and did not have this problem. And the only load on the VR
+output is its own two electrolytics (~35 µF, see §0.7), so the digipot has almost nothing to
+regulate against either way.
+
+**It remains real in exactly one case:** an ESP brownout *while a 20 V contract is already live*.
+The AP33772S runs off VBUS and is not reset, so the MCP4018 re-powers at mid-scale with 20 V on the
+VR. That makes it an **amplifier of a loop already in progress, never the initiator.**
+
+### 0.5 Changes applied in this round
+
+| Area | Change |
+|---|---|
+| **Rail sensing** | New `PDManager::setMeasuredRailVoltage(float)`, fed from the INA238 in `updatePd()`. Replaces register `0x11` in `voutArrived`, the Ready liveness check, `isSourcePhysicallyPresent()`, `isOutputEnabled()` and the band logging. |
+| **Fail-open, not fail-closed** | A rail reading below `kRailValidMinV` (3.0 V) or non-finite is treated as **"no measurement"**, and the dependent checks are **skipped rather than failed**. A source is always at least at vSafe5V once past `Disconnected`, so <3 V means the sensor, not the rail. A dead INA238 must not be able to reject a good contract or tear down a live one. |
+| **Granted vs requested** | On the `Requesting`→`Ready` transition, `_voltage`/`_current` are re-read from `readVREQ()`/`readIREQ()`. Closes §9.1's first item. |
+| **Budget independence** | New `budgetVoltageV()` in `main.cpp` falls back to the contract voltage when the INA reads implausibly. Closes **C4** (§7.C), which fixing the rail sensing turned from latent into critical — otherwise the contract *and* the control loop both hang off one INA238. |
+| **Task order** | `powerMonitorUpdateTask` now ticks **before** `pdUpdateTask`. Both run at 50 ms, so the old order would feed the state machine a reading one full tick stale every pass. |
+| **Fan** | `applyFanPwm()` holds 0 until `kFanStartDelayMs` (2000 ms), enforced centrally so no caller can bypass it — including `enterShutdown()`'s full duty from a sensor fault inside `begin()`. |
+| **Bootloop observability** | `DisplayManager::showBootBanner()` draws boot count + reset reason in large text immediately after `begin()`, and the bottom line keeps `b<N> <reason>` whenever no fault is showing. This is the **only** diagnostic channel that survives a bootloop: the RTC ring is lost when the 5 V rail fully collapses, and serial cannot attach fast enough. `BROWNOUT` = power; `panic`/`int-wdt`/`task-wdt` = software crash. |
+
+**Compile status: builds clean.** `pio run` → `SUCCESS`, RAM 7.0 %, Flash 26.8 %. Diagnostic
+strings verified present in `firmware.bin` (`PDDIAG` ×1, `rail=` ×7, `NO-MEAS` ×2, `r11=` ×1).
+This supersedes §8's "Compile status".
+
+### 0.6 The one measurement still open
+
+`ina=20.12V` on VBUS while the 42 V output bleeds off as though the VR's input were dead (§0.7).
+Two theories predict **identical register values**:
+
+- **(A)** `0x11` is the RotoPD Pro's 5 V rail; the MOS is fine; the VR is off for its own reason.
+- **(B)** The main output MOS is **open**, and the always-on 5 V leaks back onto the switched output
+  node — which would also explain a 5 V source reading 4.7 V on both.
+
+Against (B): `sys=0x12` is exactly what `setOutput(1)` writes, `VSELMIN` defaults to 5000 mV so
+20 V clears it, and `sticky=0x07` shows no protection ever tripped. Nothing in the register set
+accounts for an open MOS.
+
+**Probe the big VR's input pad while it loops.** 20 V → (A). ~0 V → (B), and that is the next bug.
+
+### 0.7 Incidental: the 42 V output decay is a pure RC, and the VR produces nothing at step 0
+
+From the captured log, `out=` falls 23.87 → 17.76 → 13.11 → 9.66 → 7.05 V at 2.4 s intervals.
+Against the 219 k + 4.86 k divider (§1) that is τ = 8.1, 7.9, 7.9, 7.6 s — constant — so
+C ≈ **35 µF**, and the curve is a single exponential passing straight through 20 V, 10 V and 5 V
+with **no inflection**.
+
+Two conclusions. The VR was **not switching at all** during the log (a boost with 20 V on its input
+cannot let its output fall below Vin − Vf). And this **contradicts the owner's expectation** that
+digipot step 0 still yields some output voltage — worth a bench check, because if the VR really
+produces nothing at step 0 then `kCurrentAtStepZeroA = 0.14f` (`CurrentControl.cpp:22`) calibrates a
+state that does not exist.
+
+### 0.8 Third round (2026-09-02) — the INA238 hardware circuit breaker trips on inrush
+
+The §0.6 open question is now answered for the *current* symptom. The owner reports a new, distinct
+behaviour that the earlier rounds did not cover:
+
+> PD negotiates fine, the output voltage rises, then **almost instantly starts to drop again**.
+> The ESP stays on (it is fed by the RotoPD Pro's always-on 5 V output, not the switched main
+> output), and the INA still reads 20 V. No error reason is shown on the display. On the same port,
+> a fast unplug/replug at the moment the output rises makes it turn on and stay up. No load is
+> connected to the regulator.
+
+This is **not** the §0.3 reboot loop (the ESP does not reset) and **not** the §0.1 acceptance bug
+(the contract is accepted and the output rises). It is a **third, independent fault**.
+
+#### 0.8.1 Mechanism (*inferred, strongly supported*)
+
+On the RotoPD Pro the INA238's physical **ALERT** pin is wired to the VOUT MOSFET gate circuitry as
+a fast hardware circuit breaker. The firmware configured it with a hard 5.0 A threshold
+(`setOverCurrentLimit(5000)`, `PowerMonitor.cpp`) and latched alerting
+(`INA238_DIAG_ALERT_LATCH`) — **zero headroom on a 100 W (20 V @ 5 A) contract.**
+
+When the 20 V contract is negotiated, VBUS ramps 5 V → 20 V and charges the boost converter's
+input/output capacitors. The inrush spike ($I = C\frac{dV}{dt}$) can briefly exceed 5.0 A. The
+INA238 asserts ALERT and latches it, the VOUT MOSFET opens, the boost input drops to 0 V, and the
+boost output bleeds down through the sense divider — the pure-RC decay of §0.7. `CurrentControl`
+then calls `safe()` when the output reaches 0 V.
+
+Every observed symptom follows:
+
+| Symptom | Explanation |
+|---|---|
+| Output rises then collapses | Inrush spike trips the 5.0 A breaker as VBUS steps to 20 V |
+| ESP stays on, INA reads 20 V | The breaker only opens the switched VOUT MOS; the always-on 5 V rail and the pre-MOS INA tap are unaffected |
+| No error on display | The AP33772S never trips (`status=0x02`, `sys=0x12` force-ON), and the firmware never read the INA238 `DIAG_ALERT` register, so the latch was neither cleared nor reported |
+| PSU/port dependent | Different chargers/ports have different VBUS slew rates; only the faster ones exceed 5.0 A |
+| Fast unplug/replug works | The boost caps stay charged, so re-applying 20 V causes negligible inrush |
+| No load connected | Inrush is capacitive, not resistive — it needs no load |
+
+#### 0.8.2 Changes applied this round
+
+| Area | Change |
+|---|---|
+| **INA238 OCP headroom** | `setOverCurrentLimit(5000)` → `6500` mA (`kOverCurrentLimitMa`), so a 5 A contract has margin for ripple/inrush without tripping the hardware breaker. Still below the 7 A shunt rating. |
+| **INA238 slow alert** | `INA238_DIAG_SLOW_ALERT` enabled, so OCP compares against the averaged reading rather than a sub-ms raw inrush sample. |
+| **INA238 alert monitoring** | `PowerMonitor::update()` now reads `DIAG_ALERT` every pass, OR-accumulates a sticky latch (`_alertSticky`), and logs any trip (`SHNTOL`/`BUSOL`/`BUSUL`/`TMPOL`) to `DiagLog`. Reading the register also clears the hardware latch so the breaker can re-arm. |
+| **INA238 alert visibility** | `INA FAULT: <text>` shown on the display bottom line (below the AP33772S fault check), and `INA_FAULT:` appended to the `[PDDIAG]` line via a new `logDiagnostics(..., const char *inaAlertText)` parameter. |
+| **Serial noise** | Removed the stray unformatted `Serial.printf("raw reading: %d")` from `VoltageMonitor::update()`. |
+
+**Compile status: builds clean.** `pio run` → `SUCCESS`, RAM 7.1 %, Flash 26.9 %.
+
+#### 0.8.3 How to confirm on the bench
+
+With the new `INA_FAULT:`/`[PDDIAG]` output, cold-start into the previously-failing port and check
+whether `INA FAULT: OCP` (or `INA_FAULT:OCP` in the log) appears at the moment the output
+collapses. If it does, the inrush/headroom fix is confirmed. If it does **not**, the MOS is opening
+for another reason and §0.6's probe (measure the big VR's input pad while it loops) is the next
+step.
+
+### 0.9 Fourth round (2026-09-02) — Premature attach entry & hard resets interrupting AP33772S startup
+
+A fourth failure mode was observed when powering from a USB-C powerbank:
+
+> It starts, sits at 5 V showing no error, and after a few seconds (~5.8 s) resets, looping forever.
+> When connected to a PC via USB (dual-powered), it sometimes negotiated 20 V, but was super
+> unreliable. Captured log:
+> `[DIAG] b1 0.800s attach: rail=5.02V opmode=0x00`
+> `[DIAG] b1 2.047s AttachSettle: no PDOs after 1247ms; send hardReset`
+> `[DIAG] b1 3.247s AttachSettle: no PDOs after 1200ms; send hardReset`
+> `[DIAG] b1 4.464s AttachSettle: no PDOs after 1217ms; send hardReset`
+> `[DIAG] b1 5.696s AttachSettle: non-PD / legacy source`
+> `[DIAG] b1 5.845s status=0x01 STARTED`
+> `[DIAG] b1 5.846s CHIP RESTARTED (STARTED while in state 1)`
+
+#### 0.9.1 Mechanism (*verified from logs and datasheet §7.5 / §8.2*)
+
+1. **Premature attach entry:** At $t = 0.8\text{ s}$, `isSourcePhysicallyPresent()` saw `rail = 5.02 V >= 3.0 V`
+   and returned `true`, causing `PDManager` to transition from `Disconnected` to `AttachSettle` immediately.
+   However, the AP33772S had `opmode=0x00` and `status=0x00` — it was still in its internal power-on /
+   moisture detection sequence. Per datasheet §7.5, moisture/attach testing on the DN pin takes up to
+   **2200 ms** before `STATUS.STARTED = 1` is asserted.
+2. **Hard resets aborting startup:** Because `AttachSettle` had a 1.2 s timeout, it issued `_pd.hardReset()`
+   at $t = 2.0\text{ s}$, $3.2\text{ s}$, and $4.4\text{ s}$. Each `hardReset()` forced the AP33772S to
+   abort its CC handshake and restart its 2.2 s internal timer!
+3. **Powerbank auto-shutdown timer:** Only after the 3 reset attempts stopped at 5.7 s did the AP33772S
+   finally reach `STARTED=1` (at 5.845 s, exactly 149 ms later). But by 5.8 s, the powerbank's internal
+   ~6-second low-load auto-shutdown timer had already expired (since the charger was drawing 0 mA),
+   cutting VBUS and resetting the ESP.
+
+#### 0.9.2 Changes applied this round
+
+| Area | Change |
+|---|---|
+| **Attach gate** | `Disconnected` now requires `(status & STARTED_MSK) != 0 || (opmode & 0x03) != 0` to transition to `AttachSettle`. Rail voltage alone no longer bypasses chip initialization. |
+| **Startup config timing** | `applyStartupConfig()` is only called once `STARTED=1` or `opmode != 0`, matching datasheet §8.2's ~100 ms post-start configuration window. |
+| **Hard reset delay** | `kAttachHardResetTimeoutMs` raised to 3000 ms, ensuring the chip's 2200 ms internal startup completes undisturbed before any fallback is considered. |
+
+**Compile status: builds clean.** `pio run` → `SUCCESS`, RAM 7.1 %, Flash 26.9 %.
+
+### 0.10 Fifth round (2026-09-02) — the round-4 fix verified in firmware, but the powerbank still fails: DN/moisture false positive
+
+The round-4 build was flashed and retested on the powerbank. The fix behaves exactly as designed —
+no premature attach, no firmware-issued hard resets — **but the loop is unchanged**. New 1 s-interval log:
+
+```
+[DIAG] b1  0.050s boot #1 (power-on)
+[DIAG] b1  0.796s rail measurement available (5.02V)
+[DIAG] b1  2.005s rail ? -> LOW(~5V) (5.02V) contract=0.0
+[DIAG] b1  5.752s status=0x01 STARTED
+[DIAG] b1  5.755s attach: rail=5.02V opmode=0x80 (STARTED)
+[DIAG] b1  7.008s status=0x02 READY
+[DIAG] b1  8.796s AttachSettle: legacy 5V non-PD source
+       (≈10s) powerbank cuts VBUS -> ESP reboots -> identical cycle
+```
+
+#### 0.10.1 What the log proves
+
+1. **STARTED at 5.75 s with zero firmware resets.** STATUS is polled every 100 ms and STARTED is
+   read-clear, so a chip restart cannot hide — there was exactly ONE startup, and it took 5.75 s ≈
+   **two 2200 ms DN-check cycles** (§7.5), not the single 2.2 s a passing check needs.
+2. **No Source_Capabilities ever arrived.** NEWPDO never fired between STARTED and the legacy
+   declaration; the PDO table stayed empty. Per §6.7 the chip "enters Non-PD Mode after PD negotiation
+   fails" → `LGCYMOD` latched by 8.8 s.
+3. **READY at 7.0 s** is the startup-complete/ready-for-I²C bit (§5.4/§8.2), not a contract — no
+   request was ever possible with an empty PDO table.
+4. The failure is **deterministic per attach** — the power-cycle loop itself is an endless retry
+   that never succeeds, which is why more retries of the same kind were not the answer.
+
+#### 0.10.2 Mechanism — the chip is deaf to caps for ~5.75 s; the powerbank gives up first
+
+**New hardware fact (RotoPD Pro V1.2 KiCad schematic, `Hardware/RotoPDPro.kicad_sch`):** the AP33772S's
+**DP and DN pins are unconnected** — DN (pin 18) carries an explicit `no_connect` marker at its pin
+position, DP (pin 19) has no wire either. The USB-C connector's D+/D− run through the ESD clamp
+(D4, TPD4E05U06) to nets `USB_P`/`USB_N` that do **not** reach the AP33772S. So the moisture-detection
+feature is not wired up, and the earlier "powerbank's D− circuitry trips the DN check" theory is
+**refuted** — the D− line never reaches the chip. (A charge-only cable therefore cannot change anything.)
+
+What remains is a timing problem:
+
+1. **The chip is not ready to ACK caps until ~5.75 s.** Exactly one STARTED (STATUS polled every
+   100 ms, read-clear — a restart cannot hide), so this is a single slow startup. Whether the 5.75 s
+   is the moisture check with floating DN (if the chip treats open as abnormal) or the powerbank
+   presenting Rp late is still open — the OPMODE transition log now answers it (CCFLIP early = chip
+   slow; CCFLIP at ~5.7 s = source slow).
+2. **The powerbank gives up on caps before then.** No NEWPDO ever; the HUSB238 (which ACKs caps
+   instantly in hardware) works with the same powerbank, so the powerbank's PD engine is fine — it
+   just stops re-sending caps after a short window.
+3. **LGCYMOD latches at 8.8 s** (§6.7: Non-PD mode after PD negotiation fails) → no contract →
+   ~100 mA load → powerbank auto-off at ~10 s → reboot → deterministic loop.
+4. Wall chargers work because they keep re-sending caps until the chip is ready (~5.7 s); the
+   powerbank does not.
+
+#### 0.10.3 The fix — force the source to re-broadcast, and keep it alive while retrying
+
+The only lever available is the chip's `hardReset()` (PD_CMDMSG.HRST, §5.4): it makes the source
+re-attach and re-broadcast Source_Capabilities, which the now-ready chip can ACK. Two changes:
+
+1. **Aggressive re-attach:** in `AttachSettle`, a `hardReset()` is sent as soon as **1 s** passes with
+   no PDOs after STARTED (or the chip latches `LGCYMOD`), bounded **5×** with a **3 s** backoff. The
+   CHIP RESTARTED handler resets the settle timer on each new STARTED, so the timeout is always
+   relative to the chip's actual readiness.
+2. **Keep-alive load:** while a source is attached but no contract exists and retries are active
+   (`PDManager::isAttachRetrying()`), the fan runs at 100 % — the largest controllable load on the
+   5 V rail — so the powerbank's low-load auto-off cannot cut power before the retries succeed.
+
+#### 0.10.4 Changes applied this round
+
+| Area | Change |
+|---|---|
+| **OPMODE transition log** | `update()` reads OPMODE once per pass and logs every change with a timestamp (`opmode 0x00 -> 0x80 CCFLIP` …). The exact moment the chip classifies the source (PDMOD vs LGCYMOD) is now DiagLog evidence, and a wedged I²C bus shows up as a transition to 0x00. |
+| **Aggressive re-attach** | `AttachSettle` sends `hardReset()` as soon as 1 s passes with no PDOs after STARTED, or `LGCYMOD` latches — bounded 5× with a 3 s backoff (`kAttachHardResetTimeoutMs=1000`, `kMaxAttachHardResetAttempts=5`, `kAttachHardResetBackoffMs=3000`). Each HRST makes the source re-broadcast caps for the now-ready chip. |
+| **Keep-alive load** | `ThermalManager::setKeepAlive()` runs the fan at 100 % while `PDManager::isAttachRetrying()` (attached, no contract, retries not exhausted), wired from `main.cpp`'s PD task. Stops automatically once a contract exists or retries are exhausted. |
+| **Bookkeeping** | `_legacyAnnounced` / `_attachHardResetAttempts` reset on attach, detach, and the recovery→settle fallback. |
+
+**Compile status: builds clean.** `pio run` → `SUCCESS`, RAM 7.1 %, Flash 26.9 %.
+
+**Expectation setting:** this is the best firmware lever available — if the powerbank responds to the
+hard-reset re-attach (or re-broadcasts caps periodically), it works. If it does not, the next step is
+hardware: determine whether the 5.75 s is the chip's own slow startup (moisture check with floating
+DN) or the powerbank presenting Rp late, via the OPMODE transition log, and act accordingly (e.g. tie
+DN to a defined impedance, or accept the powerbank is incompatible with this sink controller).
+
 ---
 
 ## 1. System under test
@@ -24,14 +353,33 @@ kept deliberately, so the same wrong idea is not re-derived.
 | Temperature | BMP280 at `0x76` (despite the class being named for an AHT10) |
 | Pins | I²C 21/22 · fan PWM 12 · PD INT 13 · ADC 33 · TFT 19/18/5/16/23/4 |
 
-**Power domains** (`pins_and_voltages.md`): the ESP, the fan MOSFET and the PD source share a 5 V
-rail; the ESP, digipot, BMP280 and PD trigger share 3V3. **The ESP is powered from the PD source.**
-This matters repeatedly: anything that drops VBUS reboots the MCU.
+**Power domains** — *corrected in §0.3; the version below is the accurate one.*
 
-**Unconfirmed hardware facts** (asked but not answered; do not assume):
-- Whether the INA238 shunt taps **VBUS (pre-MOS)** or **VOUT (post-MOS)**. Determines what a
-  disagreement between `ina=` and register `0x11` means. No RotoPD Pro schematic in this repo.
+The RotoPD Pro has **two** outputs: the switchable main PD output, and an **always-on 5 V output
+rated 0.4 A continuous / 1 A peak**. The chain is:
+
+```
+VBUS ──> RotoPD Pro always-on 5V out ──> ESP board ──> ESP's LDO makes 3V3 ──┐
+                                                                             │
+         RotoPD Pro 3V3 input (its I²C logic) <───────────────────────────────┘
+```
+
+So the AP33772S's I²C/digital domain is powered **downstream of the ESP**, while its PD/VBUS domain
+is powered independently. Two consequences: every ESP reset takes the PD board's I²C logic and its
+pull-ups down with it while VBUS stays live (partial-power sequencing across a live bus), and
+**anything that drops VBUS reboots the MCU.** Measured constant draw ~0.5 W / 100 mA at 5 V with the
+fan at 55 % — no continuous overload; the fault is a peak (§0.3).
+
+The fan MOSFET is on the 5 V rail. The digipot and BMP280 are on 3V3.
+
+**Unconfirmed hardware facts** (do not assume):
+- ~~Whether the INA238 shunt taps VBUS or VOUT~~ — **resolved in §0.2: it taps VBUS (pre-MOS), and
+  it is the only sensor on this board that sees the PD rail.** Register `0x11` does not (§0.1).
+- Whether the VOUT MOS is actually closing. **This is now the open question** — see §0.6 for the
+  one probe that settles it.
 - Whether an NTC is fitted on the AP33772S OTP pin. Governs the OTP decision in §8.
+- Whether the VR really produces any output at digipot step 0 (§0.7 says it does not; the owner
+  expects it does).
 
 ---
 
@@ -52,7 +400,14 @@ printed only once.
 
 ## 3. Root cause
 
-### 3.1 Primary mechanism (*inferred, high confidence; not yet confirmed on hardware*)
+### 3.1 Primary mechanism — ***REFUTED on hardware. See §0.1 and §0.2.***
+
+> **Do not act on this section.** The contract did *not* collapse: `msgrlt=1`, `VREQ=20.00V` and
+> `ina=20.12V` all show the source granted 20 V. The firmware never *accepted* it, because the
+> register this section's reasoning rests on (`0x11`) does not measure the PD rail on this board.
+> Kept per the confidence conventions so the same wrong idea is not re-derived. The second half of
+> the claim — "the firmware was structurally incapable of seeing it or recovering" — was correct,
+> for a different reason than given here.
 
 **The 20 V contract collapses back to vSafe5V with the VOUT MOS still closed, and the firmware was
 structurally incapable of seeing it or recovering.**
@@ -208,19 +563,36 @@ worked example in §8.3.
 | `[PDDIAG] …` | 2 s, unconditional | full register + system snapshot (below) |
 | `[DIAG] b<N> <t> …` | 30 s | full ring-buffer re-dump |
 
-`[PDDIAG]` fields: `st` (DISC/SETTLE/REQ/READY) · `contract` V/A · `pdo` index · `VOUT` (reg 0x11)
-· `VREQ` · `IREQ` · `Iout` (reg 0x12) · `Tchip` · `status` (last poll) · `sticky` (OR of every bit
-ever seen, RTC-retained) · `msgrlt` · `opmode` · `cfg` · `mask` · `sys` · `voutctl` · `ina` V/A ·
-`out` (42 V ADC) · `pot` (digipot step) · `boot#` · reset reason.
+`[PDDIAG]` fields: `st` (DISC/SETTLE/REQ/READY) · `contract` V/A · `pdo` index · **`rail`** (the
+INA238 measurement every decision uses; suffixed `(NO-MEAS)` when the sensor is absent and the
+rail-dependent checks are being skipped) · **`r11`** (register 0x11, *evidence only — not the rail,
+see §0.1*) · `VREQ` · `IREQ` · `Iout` (reg 0x12) · `Tchip` · `status` (last poll) · `sticky` (OR of
+every bit ever seen, RTC-retained) · `msgrlt` · `opmode` · `cfg` · `mask` · `sys` · `voutctl` ·
+`ina` V/A · `out` (42 V ADC) · `pot` (digipot step) · `boot#` · reset reason.
+
+The `VOUT=` field was renamed to `r11=` in the second round precisely so it can never again be read
+as authoritative in a log. Event lines that used to print `VOUT=` now print `rail=`.
+
+**Also on the display** (§0.5): the bottom line shows `b<N> <reset reason>` whenever no fault is
+being reported, and `showBootBanner()` paints boot count + reason in large text at the top of
+`setup()`. During a bootloop this is the only readable channel — the RTC ring is lost when the 5 V
+rail fully collapses. `BROWNOUT` = power; `panic`/`int-wdt`/`task-wdt` = software crash.
 
 `logDiagnostics()` deliberately **never reads STATUS** — that register is read-clear and belongs to
 `update()`. It prints the sticky copy instead.
 
 ### 5.2 Decision table
 
+> **Rows mentioning `VOUT=` predate §0.1.** Read `VOUT=` as `r11=` and remember it is pinned near
+> 5 V unconditionally, so any row keyed on it is only meaningful against `rail=` instead. The first
+> two rows below are the corrected ones.
+
 | Log signature | Confirms | Do next |
 |---|---|---|
-| `st=READY contract=20.0V` + `VOUT=5.xx` + `ina=5.x` + no fault bits | **Primary hypothesis: contract collapsed to vSafe5V, MOS still closed.** VREQ will read 20.00 (stale — only written on success) | Confirmed. Consider staged voltage stepping and a lower `CURRENT_SEL`. Every other hypothesis is dead |
+| `rail=20.xx` + `r11=4.9x` + `msgrlt=1` + `VREQ=20.00` | **The source granted 20 V and `0x11` is lying** (§0.1). Expected on this board | Nothing — this is now the normal healthy reading. Confirms the INA is pre-MOS |
+| `st=REQ` cycling at a 2.4 s period with `msgrlt=1` | The pre-§0.5 acceptance gate rejecting a good contract | Should be impossible now. If it reappears, check that `setMeasuredRailVoltage()` is still being called before `update()` and that `powerMonitorUpdateTask` still ticks first |
+| `rail=…(NO-MEAS)` | INA238 dead or absent. The rail-dependent checks are **skipped, not failed** — by design (§0.5) | The contract still forms and `budgetVoltageV()` falls back to the contract voltage, but liveness and detach detection are blind. Fix the sensor |
+| ~~`st=READY contract=20.0V` + `VOUT=5.xx` + `ina=5.x` + no fault bits~~ | ~~Contract collapsed to vSafe5V, MOS still closed~~ — **refuted, §0.2** | Superseded by the first row |
 | `VOUT=0.00` + `sticky` with `0x20`/`0x10`/`0x40` | Chip protection trip (OCP/OVP/OTP). The `CHIP FAULT` event gives the timestamp | Set `OCPTHR` explicitly. If OTP, check `Tchip` plausibility first (§8) |
 | `VOUT=0.00` + no fault bit + `voutctl=1` | `setOutput(0)` was called — false detach or latched `shutdown()` | Cross-check the `DETACH from state N` event; raise `kAbsentConfirmMs` |
 | `boot#2 BROWNOUT` + `digipot at boot: step ~64` | Brownout leg **and** the MCP4018 mid-scale power-up, measured on this board | Hardware: bulk capacitance on 3V3/5 V, or a separate ESP supply |
@@ -230,7 +602,9 @@ ever seen, RTC-retained) · `msgrlt` · `opmode` · `cfg` · `mask` · `sys` · 
 | `msgrlt=3` in a `REQUEST REJECTED` event | The source **rejected** the RDO — most likely `CURRENT_SEL` = PDO max is more than it will grant | Request less current; blacklist that PDO index for the attach |
 | `VOUT=20.xx` but `Iout=0.00` while `pot>10` | MOS is open; you are reading a **charged VR input capacitor**. Voltage alone cannot show this | This is why the `readCurrent()` cross-check exists |
 | `out=1.7x` with `pot` climbing to ~50 | The 42 V rail is dead but the ADC offset makes it read 1.74 V, so the control law demands full current | Should now be prevented by `kCalibrationValidFromV`; if it still appears, raise the floor |
-| `ina=0.00V/0.00A` while `contract=20.0V` | INA238 dead or absent — this silently zeroes the whole power budget | Fall back to the contract voltage for the budget; surface it on the display |
+| `ina=0.00V/0.00A` while `contract=20.0V` | INA238 dead or absent — this used to silently zero the whole power budget | **Fixed in §0.5** via `budgetVoltageV()`; the line now reads `rail=…(NO-MEAS)` too |
+| `boot#N` climbing on the display with reason `BROWNOUT` | The 5 V peak-load fault (§0.3) | Add the bulk cap. This is the objective counter the earlier fan-at-0 % test lacked |
+| `boot#N` climbing with reason `panic`/`int-wdt`/`task-wdt` | A software crash, **not** a power fault | Different problem entirely; get the backtrace over serial |
 
 ---
 
@@ -518,7 +892,7 @@ not an ini change — the carets are still there. Safe to delete.
 - Fix: replace with a non-blocking `_settleUntilMs` gate that suppresses ramping but keeps all sampling running.
 - Lenses: APP, SM
 
-**C4 · ina238-failure-silently-zeroes-the-power-budget** — high — `src/main.cpp:113, 166-168`; `src/PowerMonitor.cpp:21-24`
+**C4 · ina238-failure-silently-zeroes-the-power-budget** — high — **FIXED in §0.5** (`budgetVoltageV()` in `main.cpp`). Note it was *promoted* to critical by the §0.5 rail-sensing change before being fixed, since the contract would otherwise have depended on the same sensor. — `src/main.cpp:113, 166-168`; `src/PowerMonitor.cpp:21-24`
 - Wrong: `begin()`'s result only prints one boot line; the INA238 library returns 0.0 on any I2C failure, so `pdPowerLimit = 0` → `calculateOutputPowerLimit(0) = 0` → `CurrentControl::update(0)` → `safe()` forever. Architecturally, the PD budget should not depend on a sensor at all.
 - Impact: a charger that negotiates, displays 20 V and never charges, with the only clue a boot line the user cannot see later. Fail-safe, but a diagnostic trap.
 - Fix: compute the budget from `pdManager.getVoltage()`, keep a `_healthy` flag in PowerMonitor, and surface it on the display and in the periodic log.
@@ -837,14 +1211,19 @@ Highest-risk uncompiled items, since they are the largest and most recent: the `
 
 ## 9. Open items and decisions
 
-Everything below is **not applied**. Items 9.2 and 9.3 need decisions or hardware knowledge
-that only the project owner has.
+Items 9.2 and 9.3 need decisions or hardware knowledge that only the project owner has.
+**§0.5 applied several of the 9.1 items; they are struck through below.**
 
-### 9.1 — Small, unambiguous, not yet done
+### 9.1 — Small, unambiguous
 
 | Item | Where | Note |
 |---|---|---|
-| `_voltage`/`_current` published from the *request*, not from `readVREQ()`/`readIREQ()` on success | `PDManager::requestBestPdo()` | The liveness check covers the consequence, not the cause. Keep `_requestedVoltage` separate and publish only at the Ready transition. Also zero them on timeout and in `shutdown()` |
+| ~~`_voltage`/`_current` published from the *request*~~ | `PDManager` | **Done in §0.5** — re-read from `readVREQ()`/`readIREQ()` at the Ready transition. Still not zeroed on timeout or in `shutdown()` |
+| ~~Power budget zeroed by a dead INA238~~ | `main.cpp` | **Done in §0.5** — `budgetVoltageV()` falls back to the contract voltage. Was C4 (§7.C) |
+| ~~Fan inrush stacked on the boot window~~ | `ThermalManager` | **Done in §0.5** — `applyFanPwm()` holds 0 for 2 s, enforced centrally. §0.3 suggests the fan was **not** the culprit, but the load is still better out of that window |
+| ~~No reset reason visible during a bootloop~~ | `DisplayManager` | **Done in §0.5** — banner + persistent bottom line |
+| **Hardware: bulk capacitance on the 5 V rail** | — | **The confirmed fix for §0.3.** 100 µF works (hand-held). Transient is sub-ms, so **ESR matters more than µF**: use a low-ESR electrolytic *plus* a 10 µF and a 100 nF X7R in parallel, leads as short as the layout allows. Do **not** fit a large general-purpose electrolytic and expect it to help |
+| `kMaxRequestVoltageV = 28.0f` | `PDManager.h` | Untested rather than known-broken. The 28 V Ugreen port was the worst behaved; retest it once the cap is fitted |
 | `shutdown()` leaves `_state == Ready` | `PDManager::shutdown()` | `isReady()`/`getVoltage()` keep advertising a live contract after a latched shutdown |
 | No `Wire.setTimeOut(50)`, no 9-pulse bus recovery | `main.cpp` `Wire.begin()` | Capital **O** — `Stream::setTimeout()` is a different, silently useless function |
 | INT is polled, never `attachInterrupt`-driven | `PDManager::update()` | `note_rotopd_pro_interrupt.txt` describes the intended path. Cheap middle ground: sample GPIO13 every `loop()` iteration outside the 50 ms task |
@@ -854,6 +1233,13 @@ that only the project owner has.
 | `platform = espressif32` unpinned | `platformio.ini` | Same source can produce a materially different binary elsewhere |
 
 ### 9.2 — reduce inrush
+
+> **Re-scoped by §0.3 and §0.4.** This section was written believing the 42 V spike and the reboot
+> loop came from inrush into the VR's input capacitance, driven by the digipot's mid-scale
+> power-up. §0.4 refutes that for a cold start, and §0.3 shows the reboot loop is a **5 V rail
+> peak** fixed by capacitance on that rail. So (a)–(d) below are no longer the priority — but (b)
+> and (c) remain worthwhile on their own merits, which were never about inrush anyway.
+
 Three candidate levers. **Only one actually reduces inrush; do all three, but for different reasons.**
 
 **(a) Staged voltage request — this is the inrush fix.** Inrush into the VR's input capacitance is `i = C · dV/dt` and delivered charge per step is `Q = C · ΔV`. Splitting 5→20 V into 5→9→15→20 cuts the peak of each transition by roughly 3×, and the source re-slews per transition. Dwelling at 5 V achieves nothing (a dwell does not change the size of the *next* step) — the step count is what matters.
