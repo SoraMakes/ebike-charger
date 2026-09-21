@@ -10,14 +10,14 @@
 #include "EfficiencyEstimator.h"
 #include "DiagLog.h"
 
-// TTGO T-Display I2C pins (SDA=21, SCL=22).
+// TTGO T-Display I2C pins.
 static constexpr int      I2C_SDA_PIN              = 21;
 static constexpr int      I2C_SCL_PIN              = 22;
-static constexpr float    kMinChargeVoltage        = 8.5f;  // Minimum voltage required to enable the charger (eg minimum voltage of the boost converter)
+static constexpr float    kMinChargeVoltage        = 8.5f;  // Charger enable floor.
 
-// TTGO T-Display: digital pins.
-static constexpr uint8_t kFanPin  = 12;  // LEDC PWM fan driver (MOSFET)
-static constexpr int8_t  kPdIntPin = 13; // PD trigger board (RotoPD Pro) INT output
+// Digital pins.
+static constexpr uint8_t kFanPin  = 12;  // Fan MOSFET driver.
+static constexpr int8_t  kPdIntPin = 13; // RotoPD Pro INT output.
 
 static PDManager      pdManager;
 static ThermalManager thermalManager;
@@ -27,11 +27,10 @@ static VoltageMonitor voltageMonitor;
 static DisplayManager displayManager;
 static EfficiencyEstimator efficiencyEstimator;
 
-static constexpr float kElectronicsPowerW          = 2.0f;  // esp, sensors, fan  (measured: 1W over USB, fan 100%, no INA, no output current sensor)
-static constexpr float kNoLoadInputW               = 5.0f;  // wall-input floor below which the load is treated as absent
+static constexpr float kElectronicsPowerW          = 2.0f;  // Electronics overhead.
+static constexpr float kNoLoadInputW               = 5.0f;  // Absent-load floor.
 
-// A periodic task owns its interval, timestamp, and the action to run once due.
-// Unsigned subtraction remains safe across the millis() rollover.
+// Rollover-safe interval task.
 class PeriodicTask {
 public:
     PeriodicTask(uint32_t intervalMs, void (*action)()) : _intervalMs(intervalMs), _action(action) {}
@@ -59,8 +58,6 @@ static float calculateOutputPowerLimit(float inputPowerLimitW) {
     return regulatorInputPowerW * efficiencyEstimator.getEfficiency();
 }
 
-// --- Task actions -----------------------------------------------------------
-
 static void updateDisplay() {
     displayManager.update(pdManager, thermalManager, currentControl, voltageMonitor, powerMonitor, efficiencyEstimator);
 }
@@ -70,7 +67,7 @@ static void updateThermal() {
 }
 
 static void updatePd() {
-    // INA238 PD-input volts feed contract accept/lost checks.
+    // PD-input volts for contract checks.
     pdManager.setMeasuredInputVoltage(powerMonitor.getInputVoltage());
     pdManager.update();
 
@@ -91,7 +88,7 @@ static void updatePowerMonitor() {
     powerMonitor.update();
 }
 
-// Compact system status: PD state plus thermal (no PDManager formatting).
+// PD plus thermal status.
 static void logSystemDiagnostics() {
     static const char *kStateNames[] = {"DISC", "SETTLE", "REQ", "READY"};
     const char *inaAlert = powerMonitor.getAlertText();
@@ -112,7 +109,7 @@ static void dumpDiagnosticHistory() {
 }
 
 static void updateCurrentControl() {
-    // Measured INA volts set budget; contract current is the target.
+    // INA volts budget; contract current target.
     const float inputVoltageV = powerMonitor.getInputVoltage();
     const float pdPowerLimit = pdManager.getCurrent() * inputVoltageV;
     const float pdOutputPowerLimit = calculateOutputPowerLimit(pdPowerLimit);
@@ -124,9 +121,8 @@ static void updateCurrentControl() {
     currentControl.update(outputPowerLimit, noLoad);
 }
 
-// Feeds the efficiency estimator with the allowed vs. measured input power.
 static void updateEfficiency() {
-    // Measured INA volts/current; contract current is the allowed target.
+    // INA volts/current; contract current is allowed.
     const float inputVoltageV = powerMonitor.getInputVoltage();
     const float allowedInputPowerW = pdManager.getCurrent() * inputVoltageV;
     const float actualInputPowerW  = inputVoltageV * powerMonitor.getInputCurrent();
@@ -139,11 +135,9 @@ static void updateEfficiency() {
                                noLoad);
 }
 
-// --- Task table: interval and action defined together ------------------------
-
 static PeriodicTask displayTask(100, updateDisplay);
 static PeriodicTask thermalUpdateTask(1000, updateThermal);
-// 50ms PD tick for sub-second debounce/timeout constants.
+// Sub-second debounce/timeout tick.
 static PeriodicTask pdUpdateTask(50, updatePd);
 static PeriodicTask voltageUpdateTask(100, updateVoltage);
 static PeriodicTask powerMonitorUpdateTask(50, updatePowerMonitor);
@@ -159,34 +153,31 @@ void setup() {
 
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
-    // Digipot powers at mid-scale: force minimum-current step first.
+    // Digipot powers mid-scale.
     currentControl.begin(Wire, voltageMonitor);
 
     displayManager.begin();
     efficiencyEstimator.begin();
 
-    // PDManager first: shutdown targets must exist before sensors can latch.
+    // Shutdown targets before sensors.
     while (!pdManager.begin(Wire, kPdIntPin)) {
         displayManager.showMessage("PD controller\nnot found!");
         delay(2000);
     }
 
-    voltageMonitor.begin(33, pdManager);  // voltage-divider ADC input
+    voltageMonitor.begin(33, pdManager);  // Divider ADC input.
     if (!thermalManager.begin(Wire, kFanPin, pdManager)) {
         DiagLog::event("safety temp sensor");
     }
 
     if (!powerMonitor.begin()) {
-        // INA is rail truth; without it negotiation would run blind.
+        // No rail truth without INA.
         pdManager.shutdown("ina missing");
     }
 }
 
 void loop() {
-    // Display always runs.
     displayTask.tick();
-
-    // Thermal & fan always run, regardless of PD state.
     thermalUpdateTask.tick();
 
     powerMonitorUpdateTask.tick();

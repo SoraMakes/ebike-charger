@@ -5,20 +5,20 @@
 #include <math.h>
 #include <string.h>
 
-// Protection bits (mask gates INT pin only).
+// INT-pin mask.
 static constexpr uint8_t kFaultMask = UVP_MSK | OVP_MSK | OCP_MSK | OTP_MSK;
 static constexpr uint32_t kNegotiationTimeoutMs = 2000;
 static constexpr uint32_t kProfileRecheckMs = 500;
 static constexpr uint32_t kStatusPollMs = 500;
-// Contract dead when input below 75% of contract (20V->5V is 25%).
+// Dead below 75% of contract.
 static constexpr float kContractLiveFraction = 0.75f;
-// Low-input dwell before contract declared dead.
+// Dead-declare dwell.
 static constexpr uint32_t kContractLostMs = 300;
 static constexpr uint32_t kRecoveryBackoffMs = 2000;
 
 bool PDManager::begin(TwoWire &wire, int8_t intPin) {
     _intPin = intPin;
-    // INT idles low; floating pin would fake interrupts and eat STATUS.
+    // INT idles low; floating fakes interrupts.
     pinMode(_intPin, INPUT_PULLDOWN);
     bool ok = _pd.begin(wire);
     if (ok) {
@@ -27,14 +27,13 @@ bool PDManager::begin(TwoWire &wire, int8_t intPin) {
     return ok;
 }
 
-// Config written once after STARTED, before first negotiation.
+// Once after STARTED.
 void PDManager::applyStartupConfig() {
     if (_configured) {
         return;
     }
-    // UVP trips falsely on RotoPD Pro.
+    // False UVP on RotoPD Pro.
     _pd.clearConfig(AP33772_CONFIG::UVP_EN);
-    // Unmask faults to INT pin.
     _pd.setInterruptRegisterMask(STARTED_MSK | READY_MSK | NEWPDO_MSK | kFaultMask);
     _configured = true;
 }
@@ -44,7 +43,7 @@ void PDManager::setMeasuredInputVoltage(float volts) {
     _inputValid = isfinite(volts) && (volts >= kInputValidMinV);
 }
 
-// STATUS is read-clear: accumulate every bit into the sticky latch.
+// Read-clear STATUS latch.
 uint8_t PDManager::pollStatus() {
     const uint8_t status = _pd.readStatus();
     if (status == 0) {
@@ -58,9 +57,7 @@ uint8_t PDManager::pollStatus() {
     return status;
 }
 
-// Returns e.g. "OCP " or "OVP OTP ": latched AP33772S protections.
-// UVP=input undervoltage, OVP=input overvoltage, OCP=input overcurrent,
-// OTP=chip overtemperature. Latched until reboot; drives display/log.
+// Latched protections, e.g. OCP OVP OTP.
 const char *PDManager::getFaultText() const {
     static char text[20];
     text[0] = '\0';
@@ -89,7 +86,7 @@ void PDManager::update() {
         return;
     }
 
-    // INT fast path plus slow fallback poll (missed/short pulse safety net).
+    // Fast INT plus fallback poll.
     uint8_t status = 0;
     if (digitalRead(_intPin) == HIGH) {
         status = pollStatus();
@@ -108,9 +105,8 @@ void PDManager::update() {
         _lastStatus = status;
     }
 
-    // No detach path: full VBUS loss reboots the MCU (boot-only
-    // Disconnected). Sags while alive use the contract-lost path in Ready.
-    // Chip restarted underneath us: re-apply config, recover contract.
+    // VBUS loss reboots; sags use contract-lost path.
+    // Chip restart: re-apply config.
     if ((status & STARTED_MSK) && _state != PDNegotiationState::Disconnected) {
         _configured = false;
         applyStartupConfig();
@@ -123,7 +119,7 @@ void PDManager::update() {
         }
     }
 
-    // Protection trip leaves VOUT MOS open until fresh PD_REQMSG.
+    // Trip leaves VOUT open until re-request.
     if ((status & kFaultMask) && _state == PDNegotiationState::Ready) {
         attemptRecovery("protection trip");
     }
@@ -165,7 +161,7 @@ void PDManager::update() {
         }
 
         case PDNegotiationState::Requesting: {
-            // Accept only on msg success + VREQ match + input arrival.
+            // Msg success + VREQ match + input arrival.
             const uint8_t msgResult = static_cast<uint8_t>(_pd.readMsgResult() & 0x07);
             const float activeVoltage = _pd.readVREQ() / 1000.0f;
             const bool voltageMatched = _voltage > 0.0f && fabsf(activeVoltage - _voltage) <= kVoltageMatchV;
@@ -181,7 +177,7 @@ void PDManager::update() {
             }
             if (msgSuccess && voltageMatched && inputArrived) {
                 _state = PDNegotiationState::Ready;
-                // Republish granted (not requested) voltage/current.
+                // Granted voltage/current.
                 const int grantedVreqMv = _pd.readVREQ();
                 const int grantedIreqMa = _pd.readIREQ();
                 if (grantedVreqMv > 0) { _voltage = grantedVreqMv / 1000.0f; }
@@ -198,7 +194,7 @@ void PDManager::update() {
         }
 
         case PDNegotiationState::Ready: {
-            // Dead contract via PD input volts (no sensor: skip, don't fail).
+            // Dead contract via input volts; fail-open.
             if (_inputValid && _voltage > 0.0f && _inputVoltageV < _voltage * kContractLiveFraction) {
                 if (_contractLostSinceMs == 0) {
                     _contractLostSinceMs = millis();
@@ -217,7 +213,7 @@ void PDManager::update() {
             _stateEnteredAt = millis();
             _pd.refreshPdoTable();
             const uint8_t bestPdo = findBestFixedPdo();
-            // Compare voltage, not index: same voltage must not renegotiate.
+            // Same voltage must not renegotiate.
             const float bestVoltageV = (bestPdo != 0) ? _pd.getPdoVoltageV(bestPdo) : 0.0f;
             if (bestPdo != 0 && fabsf(bestVoltageV - _voltage) > kVoltageMatchV) {
                 DiagLog::event("contract %.0fV->%.0fV", _voltage, bestVoltageV);
@@ -232,7 +228,7 @@ void PDManager::update() {
     }
 }
 
-// Fresh PD_REQMSG after trip/restart/loss (rate-limited, unbounded).
+// Re-request after trip/restart/loss.
 bool PDManager::attemptRecovery(const char *reason) {
     (void)reason;
     if (_lastRecoveryMs != 0 && millis() - _lastRecoveryMs < kRecoveryBackoffMs) {
@@ -278,7 +274,7 @@ uint8_t PDManager::findBestFixedPdo() const {
         if (voltageV <= 0.0f || voltageV > kMaxRequestVoltageV) {
             continue;
         }
-        // Skip "<1.24A" bucket: unusable and pins OCP too low.
+        // Unusable low-current bucket.
         if (_pd.getPdoMaxCurrentA(pdo) < kMinUsablePdoCurrentA) {
             continue;
         }
