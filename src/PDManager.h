@@ -48,7 +48,15 @@ private:
     uint8_t findBestFixedPdo() const;
     void applyStartupConfig();
     uint8_t pollStatus();
-    bool attemptRecovery(const char *reason);
+    bool attemptRecovery();
+    void enter(PDNegotiationState state);
+    uint8_t pollInputs(uint8_t &opMode);
+    void handleChipRestart(uint8_t status);
+    void handleProtectionTrip(uint8_t status);
+    void onDisconnected(uint8_t status, uint8_t opMode);
+    void onAttachSettle(uint8_t status);
+    void onRequesting();
+    void onReady(uint8_t status);
 
     AP33772S _pd;
 
