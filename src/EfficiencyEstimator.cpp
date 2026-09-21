@@ -15,7 +15,7 @@ void EfficiencyEstimator::update(float allowedRegulatorInputW, float actualRegul
         return;
     }
 
-    // No-load: hold minimum so the budget is not inflated.
+    // No-load hold.
     if (noLoad) {
         _efficiency = kMinEfficiency;
         return;

@@ -15,7 +15,7 @@ class DisplayManager {
 public:
     void begin();
 
-    /// Single status message, visible even when loop() is blocked.
+    /// Status message, visible when blocked.
     void showMessage(const char *msg);
 
     void update(PDManager &pd, const ThermalManager &thermal,

@@ -19,7 +19,7 @@ void DisplayManager::showMessage(const char *msg) {
     _tft.fillScreen(TFT_BLACK);
     _tft.setTextColor(TFT_WHITE, TFT_BLACK);
     _tft.setTextSize(2);
-    // TFT_eSPI drawString ignores '\n', split manually.
+    // drawString ignores newline, split manually.
     int y = 5;
     const char *lineStart = msg;
     for (const char *p = msg;; ++p) {
@@ -53,21 +53,21 @@ void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
     _tft.setTextColor(TFT_WHITE, TFT_BLACK);
     _tft.setTextSize(2);
 
-    // Line 1: negotiated PD contract plus measured PD input (INA238).
+    // PD contract plus input.
     _tft.drawString("I " + String(pdVoltageV, 0) + "V/" + String(pdCurrentA, 1) + "A " +
                      String(measuredVoltageV, 1) + "/" + String(measuredCurrentA, 1), 5, 5);
 
-    // Line 2: charger output voltage plus active current limit.
+    // Output volts plus current limit.
     _tft.drawString("Out: " + String(outputVoltageV, 1) + "V " + String(currentLimitA, 2) + "A ", 5, 35);
 
-    // Line 3: output power at current limit plus measured PD input volts.
+    // Output power plus input volts.
     _tft.drawString("Max: " + String(maxPowerW, 1) + "W  in " +
                      String(measuredVoltageV, 1) + "V", 5, 65);
 
-    // Temperature and VR efficiency estimate on one line.
+    // Temperature plus efficiency.
     _tft.drawString("Temp: " + String(tempC, 1) + "C " + String(efficiencyPct, 0) + "%", 5, 95);
 
-    // Bottom line: shutdown, chip fault, INA alert.
+    // Shutdown, chip fault, INA alert.
     if (pd.isShutdownLatched()) {
         _tft.drawString("STOP: " + String(pd.getShutdownReason()) + "      ", 5, 118);
     } else if (pd.hasChipFault()) {
