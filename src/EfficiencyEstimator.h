@@ -16,6 +16,6 @@ private:
     static constexpr float kDefaultEfficiency = 0.88f;
     static constexpr float kMinEfficiency     = 0.85f;
     static constexpr float kMaxEfficiency     = 0.95f;
-    static constexpr float kEfficiencyStep    = 0.005f; // per tick, increase only
-    static constexpr float kTargetUtilization = 0.98f;  // target input-power utilization
+    static constexpr float kEfficiencyStep    = 0.005f; // Increase-only.
+    static constexpr float kTargetUtilization = 0.98f;  // Target utilization.
 };

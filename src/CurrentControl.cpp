@@ -9,7 +9,7 @@ static constexpr uint32_t kIncreaseIntervalMs = 250;
 static constexpr int16_t kFinalRampSteps = 4;
 static constexpr int16_t kRampUpDivisor = 8;
 
-// Output-current calibration: actual = 0.14A + step * 0.0572A.
+// Output-current calibration.
 static constexpr float kCurrentAtStepZeroA   = 0.14f;
 static constexpr float kCurrentPerStepA      = 0.0572f;
 static constexpr float kMaxAllowedOutputAmps = 3.0f;
@@ -38,7 +38,7 @@ void CurrentControl::update(float limitWatts, bool noLoad) {
     const int16_t targetLevel = ampsToStep(currentLimitA);
     _targetLevel = targetLevel;
 
-    // No-load: hold low setpoint until load rises.
+    // No-load hold.
     if (noLoad && targetLevel > kNoLoadHoldStep) {
         _powerLevel = kNoLoadHoldStep;
         _lastStepChangeAt = now;

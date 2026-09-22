@@ -5,20 +5,20 @@
 #include <math.h>
 #include <string.h>
 
-// Protection bits (mask gates INT pin only).
+// INT-pin mask.
 static constexpr uint8_t kFaultMask = UVP_MSK | OVP_MSK | OCP_MSK | OTP_MSK;
 static constexpr uint32_t kNegotiationTimeoutMs = 2000;
 static constexpr uint32_t kProfileRecheckMs = 500;
 static constexpr uint32_t kStatusPollMs = 500;
-// Contract dead when input below 75% of contract (20V->5V is 25%).
+// Dead below 75% of contract.
 static constexpr float kContractLiveFraction = 0.75f;
-// Low-input dwell before contract declared dead.
+// Dead-declare dwell.
 static constexpr uint32_t kContractLostMs = 300;
 static constexpr uint32_t kRecoveryBackoffMs = 2000;
 
 bool PDManager::begin(TwoWire &wire, int8_t intPin) {
     _intPin = intPin;
-    // INT idles low; floating pin would fake interrupts and eat STATUS.
+    // INT idles low; floating fakes interrupts.
     pinMode(_intPin, INPUT_PULLDOWN);
     bool ok = _pd.begin(wire);
     if (ok) {
@@ -27,14 +27,13 @@ bool PDManager::begin(TwoWire &wire, int8_t intPin) {
     return ok;
 }
 
-// Config written once after STARTED, before first negotiation.
+// Once after STARTED.
 void PDManager::applyStartupConfig() {
     if (_configured) {
         return;
     }
-    // UVP trips falsely on RotoPD Pro.
+    // False UVP on RotoPD Pro.
     _pd.clearConfig(AP33772_CONFIG::UVP_EN);
-    // Unmask faults to INT pin.
     _pd.setInterruptRegisterMask(STARTED_MSK | READY_MSK | NEWPDO_MSK | kFaultMask);
     _configured = true;
 }
@@ -44,7 +43,7 @@ void PDManager::setMeasuredInputVoltage(float volts) {
     _inputValid = isfinite(volts) && (volts >= kInputValidMinV);
 }
 
-// STATUS is read-clear: accumulate every bit into the sticky latch.
+// Read-clear STATUS latch.
 uint8_t PDManager::pollStatus() {
     const uint8_t status = _pd.readStatus();
     if (status == 0) {
@@ -58,9 +57,7 @@ uint8_t PDManager::pollStatus() {
     return status;
 }
 
-// Returns e.g. "OCP " or "OVP OTP ": latched AP33772S protections.
-// UVP=input undervoltage, OVP=input overvoltage, OCP=input overcurrent,
-// OTP=chip overtemperature. Latched until reboot; drives display/log.
+// Latched protections, e.g. OCP OVP OTP.
 const char *PDManager::getFaultText() const {
     static char text[20];
     text[0] = '\0';
@@ -89,7 +86,27 @@ void PDManager::update() {
         return;
     }
 
-    // INT fast path plus slow fallback poll (missed/short pulse safety net).
+    uint8_t opMode = 0;
+    const uint8_t status = pollInputs(opMode);
+    handleChipRestart(status);
+    handleProtectionTrip(status);
+
+    switch (_state) {
+        case PDNegotiationState::Disconnected: onDisconnected(status, opMode); break;
+        case PDNegotiationState::AttachSettle: onAttachSettle(status); break;
+        case PDNegotiationState::Requesting: onRequesting(); break;
+        case PDNegotiationState::Ready: onReady(status); break;
+    }
+}
+
+// Shared state entry.
+void PDManager::enter(PDNegotiationState state) {
+    _state = state;
+    _stateEnteredAt = millis();
+}
+
+// Fast INT plus fallback poll; logs changes.
+uint8_t PDManager::pollInputs(uint8_t &opMode) {
     uint8_t status = 0;
     if (digitalRead(_intPin) == HIGH) {
         status = pollStatus();
@@ -98,7 +115,7 @@ void PDManager::update() {
         status = pollStatus();
     }
 
-    const uint8_t opMode = _pd.readOpMode();
+    opMode = _pd.readOpMode();
     if (opMode != _lastOpMode) {
         DiagLog::event("opmode 0x%02X", opMode);
         _lastOpMode = opMode;
@@ -107,134 +124,129 @@ void PDManager::update() {
         DiagLog::event("status 0x%02X", status);
         _lastStatus = status;
     }
+    return status;
+}
 
-    // No detach path: full VBUS loss reboots the MCU (boot-only
-    // Disconnected). Sags while alive use the contract-lost path in Ready.
-    // Chip restarted underneath us: re-apply config, recover contract.
-    if ((status & STARTED_MSK) && _state != PDNegotiationState::Disconnected) {
-        _configured = false;
-        applyStartupConfig();
-        if (_state == PDNegotiationState::Ready) {
-            attemptRecovery("chip restart");
-        } else if (_state == PDNegotiationState::AttachSettle) {
-            _stateEnteredAt = millis();
-            _nextRequestAllowedMs = 0;
-            _lastPdoPollMs = 0;
-        }
+// VBUS loss reboots; sags use contract-lost path.
+void PDManager::handleChipRestart(uint8_t status) {
+    if (!(status & STARTED_MSK) || _state == PDNegotiationState::Disconnected) {
+        return;
     }
+    // Chip restart: re-apply config.
+    _configured = false;
+    applyStartupConfig();
+    if (_state == PDNegotiationState::Ready) {
+        attemptRecovery();
+    } else if (_state == PDNegotiationState::AttachSettle) {
+        enter(PDNegotiationState::AttachSettle);
+        _nextRequestAllowedMs = 0;
+        _lastPdoPollMs = 0;
+    }
+}
 
-    // Protection trip leaves VOUT MOS open until fresh PD_REQMSG.
+// Trip leaves VOUT open until re-request.
+void PDManager::handleProtectionTrip(uint8_t status) {
     if ((status & kFaultMask) && _state == PDNegotiationState::Ready) {
-        attemptRecovery("protection trip");
+        attemptRecovery();
     }
+}
 
-    switch (_state) {
-        case PDNegotiationState::Disconnected: {
-            const bool chipStarted = (status & STARTED_MSK) != 0;
-            const bool sourceDetected = (opMode & kOpModeSourceMask) != 0;
-            if (chipStarted || sourceDetected) {
-                applyStartupConfig();
-                _pd.setOutput(1);
-                _state = PDNegotiationState::AttachSettle;
-                _stateEnteredAt = millis();
-                _lastPdoPollMs = 0;
-                _nextRequestAllowedMs = 0;
-            }
-            break;
+void PDManager::onDisconnected(uint8_t status, uint8_t opMode) {
+    const bool chipStarted = (status & STARTED_MSK) != 0;
+    const bool sourceDetected = (opMode & kOpModeSourceMask) != 0;
+    if (!chipStarted && !sourceDetected) {
+        return;
+    }
+    applyStartupConfig();
+    _pd.setOutput(1);
+    enter(PDNegotiationState::AttachSettle);
+    _lastPdoPollMs = 0;
+    _nextRequestAllowedMs = 0;
+}
+
+void PDManager::onAttachSettle(uint8_t status) {
+    if (_nextRequestAllowedMs != 0 &&
+        static_cast<int32_t>(millis() - _nextRequestAllowedMs) < 0) {
+        return;
+    }
+    const uint32_t now = millis();
+    const bool pollDue = (status & NEWPDO_MSK) ||
+                         (_lastPdoPollMs == 0) ||
+                         (now - _lastPdoPollMs >= kAttachSettlePollMs);
+    if (!pollDue) {
+        return;
+    }
+    _lastPdoPollMs = now;
+    _pd.refreshPdoTable();
+    if (requestBestPdo()) {
+        enter(PDNegotiationState::Requesting);
+    }
+}
+
+void PDManager::onRequesting() {
+    // Msg success + VREQ match + input arrival.
+    const uint8_t msgResult = static_cast<uint8_t>(_pd.readMsgResult() & 0x07);
+    const float activeVoltage = _pd.readVREQ() / 1000.0f;
+    const bool voltageMatched = _voltage > 0.0f && fabsf(activeVoltage - _voltage) <= kVoltageMatchV;
+    const bool inputArrived = !_inputValid || (_voltage > 0.0f && _inputVoltageV >= _voltage * kContractLiveFraction);
+    if (msgResult >= 2) {
+        _voltage = 0.0f;
+        _current = 0.0f;
+        _nextRequestAllowedMs = millis() + kRecoveryBackoffMs;
+        enter(PDNegotiationState::AttachSettle);
+        return;
+    }
+    if (msgResult == 1 && voltageMatched && inputArrived) {
+        enter(PDNegotiationState::Ready);
+        // Granted voltage/current.
+        const int grantedVreqMv = _pd.readVREQ();
+        const int grantedIreqMa = _pd.readIREQ();
+        if (grantedVreqMv > 0) { _voltage = grantedVreqMv / 1000.0f; }
+        if (grantedIreqMa > 0) { _current = grantedIreqMa / 1000.0f; }
+        _justAttached = true;
+        _contractLostSinceMs = 0;
+        _pd.setOutput(1);
+        DiagLog::event("contract %.0fV %.1fA", _voltage, _current);
+        return;
+    }
+    if (millis() - _stateEnteredAt >= kNegotiationTimeoutMs) {
+        enter(PDNegotiationState::AttachSettle);
+    }
+}
+
+void PDManager::onReady(uint8_t status) {
+    // Dead contract via input volts; fail-open.
+    if (_inputValid && _voltage > 0.0f && _inputVoltageV < _voltage * kContractLiveFraction) {
+        if (_contractLostSinceMs == 0) {
+            _contractLostSinceMs = millis();
         }
-
-        case PDNegotiationState::AttachSettle: {
-            if (_nextRequestAllowedMs != 0 &&
-                static_cast<int32_t>(millis() - _nextRequestAllowedMs) < 0) {
-                break;
-            }
-            const uint32_t now = millis();
-            const bool pollDue = (status & NEWPDO_MSK) ||
-                                 (_lastPdoPollMs == 0) ||
-                                 (now - _lastPdoPollMs >= kAttachSettlePollMs);
-            if (pollDue) {
-                _lastPdoPollMs = now;
-                _pd.refreshPdoTable();
-                if (requestBestPdo()) {
-                    _state = PDNegotiationState::Requesting;
-                    _stateEnteredAt = now;
-                    break;
-                }
-            }
-            break;
+        if (millis() - _contractLostSinceMs >= kContractLostMs) {
+            attemptRecovery();
+            return;
         }
-
-        case PDNegotiationState::Requesting: {
-            // Accept only on msg success + VREQ match + input arrival.
-            const uint8_t msgResult = static_cast<uint8_t>(_pd.readMsgResult() & 0x07);
-            const float activeVoltage = _pd.readVREQ() / 1000.0f;
-            const bool voltageMatched = _voltage > 0.0f && fabsf(activeVoltage - _voltage) <= kVoltageMatchV;
-            const bool inputArrived = !_inputValid || (_voltage > 0.0f && _inputVoltageV >= _voltage * kContractLiveFraction);
-            const bool msgSuccess = (msgResult == 1);
-            if (msgResult >= 2) {
-                _voltage = 0.0f;
-                _current = 0.0f;
-                _nextRequestAllowedMs = millis() + kRecoveryBackoffMs;
-                _state = PDNegotiationState::AttachSettle;
-                _stateEnteredAt = millis();
-                break;
-            }
-            if (msgSuccess && voltageMatched && inputArrived) {
-                _state = PDNegotiationState::Ready;
-                // Republish granted (not requested) voltage/current.
-                const int grantedVreqMv = _pd.readVREQ();
-                const int grantedIreqMa = _pd.readIREQ();
-                if (grantedVreqMv > 0) { _voltage = grantedVreqMv / 1000.0f; }
-                if (grantedIreqMa > 0) { _current = grantedIreqMa / 1000.0f; }
-                _justAttached = true;
-                _contractLostSinceMs = 0;
-                _pd.setOutput(1);
-                DiagLog::event("contract %.0fV %.1fA", _voltage, _current);
-            } else if (millis() - _stateEnteredAt >= kNegotiationTimeoutMs) {
-                _state = PDNegotiationState::AttachSettle;
-                _stateEnteredAt = millis();
-            }
-            break;
-        }
-
-        case PDNegotiationState::Ready: {
-            // Dead contract via PD input volts (no sensor: skip, don't fail).
-            if (_inputValid && _voltage > 0.0f && _inputVoltageV < _voltage * kContractLiveFraction) {
-                if (_contractLostSinceMs == 0) {
-                    _contractLostSinceMs = millis();
-                }
-                if (millis() - _contractLostSinceMs >= kContractLostMs) {
-                    attemptRecovery("contract lost");
-                    break;
-                }
-            } else {
-                _contractLostSinceMs = 0;
-            }
-            const bool dueForRecheck = (status & NEWPDO_MSK) || (millis() - _stateEnteredAt >= kProfileRecheckMs);
-            if (!dueForRecheck) {
-                break;
-            }
-            _stateEnteredAt = millis();
-            _pd.refreshPdoTable();
-            const uint8_t bestPdo = findBestFixedPdo();
-            // Compare voltage, not index: same voltage must not renegotiate.
-            const float bestVoltageV = (bestPdo != 0) ? _pd.getPdoVoltageV(bestPdo) : 0.0f;
-            if (bestPdo != 0 && fabsf(bestVoltageV - _voltage) > kVoltageMatchV) {
-                DiagLog::event("contract %.0fV->%.0fV", _voltage, bestVoltageV);
-                _voltageJumped = true;
-                if (requestBestPdo()) {
-                    _state = PDNegotiationState::Requesting;
-                    _stateEnteredAt = millis();
-                }
-            }
-            break;
+    } else {
+        _contractLostSinceMs = 0;
+    }
+    const bool dueForRecheck = (status & NEWPDO_MSK) || (millis() - _stateEnteredAt >= kProfileRecheckMs);
+    if (!dueForRecheck) {
+        return;
+    }
+    _stateEnteredAt = millis();
+    _pd.refreshPdoTable();
+    const uint8_t bestPdo = findBestFixedPdo();
+    // Same voltage must not renegotiate.
+    const float bestVoltageV = (bestPdo != 0) ? _pd.getPdoVoltageV(bestPdo) : 0.0f;
+    if (bestPdo != 0 && fabsf(bestVoltageV - _voltage) > kVoltageMatchV) {
+        DiagLog::event("contract %.0fV->%.0fV", _voltage, bestVoltageV);
+        _voltageJumped = true;
+        if (requestBestPdo()) {
+            enter(PDNegotiationState::Requesting);
         }
     }
 }
 
-// Fresh PD_REQMSG after trip/restart/loss (rate-limited, unbounded).
-bool PDManager::attemptRecovery(const char *reason) {
-    (void)reason;
+// Re-request after trip/restart/loss.
+bool PDManager::attemptRecovery() {
     if (_lastRecoveryMs != 0 && millis() - _lastRecoveryMs < kRecoveryBackoffMs) {
         return false;
     }
@@ -243,13 +255,11 @@ bool PDManager::attemptRecovery(const char *reason) {
     _contractLostSinceMs = 0;
     _pd.refreshPdoTable();
     if (!requestBestPdo()) {
-        _state = PDNegotiationState::AttachSettle;
-        _stateEnteredAt = millis();
+        enter(PDNegotiationState::AttachSettle);
         _lastPdoPollMs = 0;
         return false;
     }
-    _state = PDNegotiationState::Requesting;
-    _stateEnteredAt = millis();
+    enter(PDNegotiationState::Requesting);
     return true;
 }
 
@@ -278,7 +288,7 @@ uint8_t PDManager::findBestFixedPdo() const {
         if (voltageV <= 0.0f || voltageV > kMaxRequestVoltageV) {
             continue;
         }
-        // Skip "<1.24A" bucket: unusable and pins OCP too low.
+        // Unusable low-current bucket.
         if (_pd.getPdoMaxCurrentA(pdo) < kMinUsablePdoCurrentA) {
             continue;
         }

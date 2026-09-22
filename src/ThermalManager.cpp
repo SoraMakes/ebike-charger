@@ -9,22 +9,21 @@ static constexpr float kShutdownTemperatureC = 50.0f;
 static constexpr float kMaximumThermalPowerW = 100.0f;
 static constexpr uint16_t kPwmRange = 1023;
 static constexpr uint32_t kFanPwmFrequencyHz = 16000;
-static constexpr uint16_t kFanMinimumDuty = 563;  // approximately 55% of 1023
+static constexpr uint16_t kFanMinimumDuty = 563;
 static constexpr uint16_t kFanFullDuty = kPwmRange;
 
-// ESP32 LEDC channel used for the fan PWM.
+// Fan PWM channel.
 static constexpr uint8_t kFanLedcChannel = 0;
 
 bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin, PDManager &pdManager) {
     _fanPin = fanPin;
     _pdManager = &pdManager;
-    // ESP32: configure the LEDC PWM peripheral for the fan.
     const uint32_t configuredFrequency = ledcSetup(kFanLedcChannel, kFanPwmFrequencyHz, 10);
     if (configuredFrequency == 0) {
         DiagLog::event("safety fan pwm");
     }
     pinMode(_fanPin, OUTPUT);
-    // Attach after pinMode so GPIO routing is not overwritten.
+    // pinMode before attach.
     ledcAttachPin(_fanPin, kFanLedcChannel);
 
     applyFanPwm(kFanMinimumDuty);

@@ -17,7 +17,7 @@ public:
     bool begin(TwoWire &wire, int8_t intPin);
     void update();
 
-    // INA238 PD-input voltage (high-voltage VBUS, not 5V aux).
+    // PD-input volts, not 5V aux.
     void setMeasuredInputVoltage(float volts);
     bool isReady() const;
     bool justAttached() const;
@@ -25,10 +25,9 @@ public:
     bool voltageJumped() const;
     float getVoltage() const;
     float getCurrent() const;
-    /// Latch permanent cut-out (VOUT MOS off) with reason.
+    /// Latched cut-out with reason.
     void shutdown(const char *reason = nullptr);
     bool isShutdownLatched() const { return _shutdownLatched; }
-    /// Shutdown reason.
     const char *getShutdownReason() const { return _shutdownReason; }
 
     PDNegotiationState getState() const { return _state; }
@@ -41,16 +40,23 @@ public:
 private:
     static constexpr float kMaxRequestVoltageV = 28.0f;
     static constexpr float kMinUsablePdoCurrentA = 1.25f;
-    // INA below this is sensor failure, not dead input.
+    // Below this is sensor failure, not dead input.
     static constexpr float kInputValidMinV = 3.0f;
     static constexpr uint32_t kAttachSettlePollMs = 150;
-    // TODO: evaluate NEWPDO-only Ready recheck, drop 500ms timer if interrupt suffices.
 
     bool requestBestPdo();
     uint8_t findBestFixedPdo() const;
     void applyStartupConfig();
     uint8_t pollStatus();
-    bool attemptRecovery(const char *reason);
+    bool attemptRecovery();
+    void enter(PDNegotiationState state);
+    uint8_t pollInputs(uint8_t &opMode);
+    void handleChipRestart(uint8_t status);
+    void handleProtectionTrip(uint8_t status);
+    void onDisconnected(uint8_t status, uint8_t opMode);
+    void onAttachSettle(uint8_t status);
+    void onRequesting();
+    void onReady(uint8_t status);
 
     AP33772S _pd;
 
@@ -74,14 +80,14 @@ private:
     char _shutdownReason[17] = "";
     bool _configured      = false;
 
-    // Bit0=CC legacy, bit1=PD source (AP33772S OPMODE).
+    // CC legacy + PD source bits.
     static constexpr uint8_t kOpModeSourceMask = 0x03;
-    // Granted VREQ must be within 0.5V of requested PDO.
+    // VREQ match window.
     static constexpr float kVoltageMatchV = 0.5f;
     uint8_t _statusSticky = 0;
     uint8_t _lastStatus = 0;
     uint8_t _lastOpMode = 0xFF;
-    // INA238 PD-input volts; fail-open when invalid.
+    // PD-input volts; fail-open when invalid.
     float _inputVoltageV = 0.0f;
     bool _inputValid = false;
 };
