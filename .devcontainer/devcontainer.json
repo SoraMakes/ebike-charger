@@ -1,0 +1,28 @@
+{
+  "name": "charger_claude",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "remoteUser": "vscode",
+  "mounts": [
+    "source=${localWorkspaceFolder}/..,target=/home/markus/projects,type=bind,readonly,consistency=cached",
+    // Nested rw mount: worktree gitdir lives in the main repo's .git, which git must write to.
+    "source=${localEnv:HOME}/projects/charger_claude/.git,target=/home/markus/projects/charger_claude/.git,type=bind,consistency=cached",
+    // Shares AGENTS.md, opencode.jsonc (MCP servers, agents) and key files.
+    "source=${localEnv:HOME}/.config/opencode,target=/home/vscode/.config/opencode,type=bind,consistency=cached",
+    // Per-container sessions/DB, surviving rebuilds.
+    "source=opencode-${devcontainerId},target=/home/vscode/.local/share/opencode,type=volume"
+  ],
+  // Forwarding the in-container opencode port breaks the host's own service.
+  "otherPortsAttributes": {
+    "onAutoForward": "ignore"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "platformio.platformio-ide"
+      ]
+    }
+  },
+  "postCreateCommand": "git config --global --add safe.directory ${containerWorkspaceFolder}"
+}
