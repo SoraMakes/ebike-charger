@@ -1,13 +1,16 @@
 {
-  "name": "charger_claude",
+  "name": "${localWorkspaceFolderBasename}",
   "build": {
     "dockerfile": "Dockerfile"
   },
   "remoteUser": "vscode",
+  "containerEnv": {
+    "OPENCODE_CONFIG_CONTENT": "{\"model\":\"opencode-go/muse-spark-1.3-contributor\"}"
+  },
   "mounts": [
-    "source=${localWorkspaceFolder}/..,target=/home/markus/projects,type=bind,readonly,consistency=cached",
-    // Nested rw mount: worktree gitdir lives in the main repo's .git, which git must write to.
-    "source=${localEnv:HOME}/projects/charger_claude/.git,target=/home/markus/projects/charger_claude/.git,type=bind,consistency=cached",
+    // Mirror the host parent dir to the same absolute path in the container,
+    // keeping worktree gitdir paths valid. Writable so git can use .git.
+    "source=${localWorkspaceFolder}/..,target=${localWorkspaceFolder}/..,type=bind,consistency=cached",
     // Shares AGENTS.md, opencode.jsonc (MCP servers, agents) and key files.
     "source=${localEnv:HOME}/.config/opencode,target=/home/vscode/.config/opencode,type=bind,consistency=cached",
     // Per-container sessions/DB, surviving rebuilds.
