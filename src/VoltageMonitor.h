@@ -2,32 +2,25 @@
 
 #include <Arduino.h>
 
-class CurrentControl;
+class PDManager;
 
-/// Measures charger output voltage through an analog voltage divider.
+/// Output voltage via analog divider.
 class VoltageMonitor {
 public:
-    /// Initializes the ADC input connected to the voltage divider.
-    void begin(uint8_t adcPin, CurrentControl &currentControl);
-
-    /// Refreshes the raw ADC reading and converted voltage values.
+    void begin(uint8_t adcPin, PDManager &pdManager);
     void update();
-
-    /// Returns the most recently measured, filtered voltage.
     float getVoltage() const;
 
-    /// Returns the most recently sampled ADC count.
-    int getRawReading() const;
-
 private:
-    static constexpr float kEmaAlpha = 0.1f; // 100 ms sampling interval
+    static constexpr float kEmaAlpha = 0.1f;
     static constexpr float kEmaResetVoltageV = 5.5f;
-    // Number of consecutive over-limit readings required before a shutdown is latched.
+    // Fit floor: report 0V below this divider voltage.
+    static constexpr float kCalibrationValidFromV = 2.0f;
     static constexpr uint8_t kOvervoltageRequiredSamples = 20;
 
-    uint8_t _adcPin = 33;  // TTGO T-Display voltage-divider ADC pin
+    uint8_t _adcPin = 33;
     int     _rawReading = 0;
     float   _voltageV   = 0.0f;
     uint8_t _overvoltageCount = 0;
-    CurrentControl *_currentControl = nullptr;
+    PDManager *_pdManager = nullptr;
 };

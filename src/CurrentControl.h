@@ -4,54 +4,35 @@
 #include <Wire.h>
 #include "VoltageMonitor.h"
 
-/// Controls the regulator enable state and open-loop charge-current setpoint.
+/// Regulator charge-current setpoint via digipot.
 class CurrentControl {
 public:
-    /// Initializes the controller and voltage monitor at a safe output level.
     void begin(TwoWire &wire, VoltageMonitor &voltageMonitor);
 
-    /// Applies an upper bound to the output power at the latest measured
-    /// output voltage.
-    /// The setpoint decreases immediately when it exceeds the bound and increases
-    /// over time when additional power is available.
-    /// @param limitWatts Maximum permitted output power in watts.
-    void update(float limitWatts);
+    /// Output-power bound; noLoad holds the setpoint low until load rises.
+    void update(float limitWatts, bool noLoad);
 
-    /// Disables the regulator and sets the digipot to step 0.
-    void safe();
+    /// Drop to minimum-current setpoint, digipot to step 0 (~0.14 A).
+    /// Does NOT turn the output off: no VR enable exists, step 0 still
+    /// sources ~0.14 A. Permanent cut-out is PDManager::shutdown().
+    void minimumCurrent();
 
-    /// Permanently disables the regulator until reset and stores a short reason.
-    void requestShutdown(const char *reason);
-
-    /// Returns the currently configured output current limit in amps
-    /// (0 when the regulator is disabled).
+    /// Configured current limit; floor is step 0 (~0.14 A), never 0.
     float getCurrentLimitA() const;
 
-    /// Returns true after a permanent shutdown request. Once latched, the
-    /// regulator can never be re-enabled until reset.
-    bool isShutdownLatched() const;
+    /// True once setpoint reached its target (also true when parked at 0).
+    bool isRampUpFinished() const;
 
-    /// Returns the short reason for the permanent shutdown.
-    const char *getShutdownReason() const;
-
-    /// Tests the regulator from the safe level through the requested digipot level.
-    /// @param maxLevel Highest digipot level to test.
-    void test(uint8_t maxLevel);
-
-    /// Tests the regulator at a fixed digipot level.
-    /// @param level Digipot level to test.
-    void test_set_fixed(uint8_t level);
+    /// Last digipot step written (-1 before first write).
+    int16_t getDigipotStep() const { return _lastDigipotStep; }
 
 private:
     TwoWire *_wire         = nullptr;
     VoltageMonitor *_voltageMonitor = nullptr;
-    /// Level -1 disables the regulator; level 0 enables it at digipot step 0.
-    int16_t  _powerLevel   = -1;
+    int16_t  _powerLevel   = 0;
+    int16_t  _targetLevel  = 0;
     int16_t  _lastDigipotStep = -1;
-    uint32_t _lastIncreaseAt = 0;
-    uint32_t _lastVoltageLogAt = 0;
-    bool     _shutdownLatched = false;
-    char     _shutdownReason[17] = "";
+    uint32_t _lastStepChangeAt = 0;
 
     void    writeDigipot(uint8_t step);
     static int16_t ampsToStep(float amps);
