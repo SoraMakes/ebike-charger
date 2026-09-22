@@ -1,0 +1,16 @@
+using the dedicated hardware INT pin coupled with the NEWPDO interrupt is the standard and intended method to detect renegotiation requirements .
+Hardware Interrupt Method
+
+    Enable mask: Write 1 to NEWPDO_MSK (Bit 2) in the MASK register (0x02) during system initialization .
+
+    Trigger event: When the PD source broadcasts updated power capabilities, the IC drives the physical INT pin high and sets STATUS.NEWPDO = 1 .
+
+    MCU action: A GPIO interrupt service routine (ISR) on the host MCU detects the pin state change, reads the STATUS register (0x01), reads the updated SRCPDO array (0x20), and issues a new PD_REQMSG (0x31) command .
+
+Advantages Over Measuring VBUS
+
+    Proactive notification: The interrupt occurs immediately during the USB PD protocol handshake, allowing the MCU to negotiate a valid profile before the power rail changes or collapses .
+
+    Zero bus overhead: Eliminates continuous, repetitive I2C polling of the VOLTAGE register (0x11) .
+
+    Prevents fault trips: Prevents the AP33772S internal undervoltage protection (UVP) or overcurrent protection (OCP) from cutting off the external power path MOSFETs unexpectedly .
