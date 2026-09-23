@@ -22,10 +22,10 @@ The serial monitor uses **115200 baud**. The required libraries are declared in
 
 | Function | GPIO | Notes |
 |---|---|---|
-| I2C SDA | 21 | Shared bus: HUSB238, AHT10, MCP4018, INA219 |
+| I2C SDA | 21 | Shared bus: AP33772S, AHT10, MCP4018, INA219 |
 | I2C SCL | 22 | Shared bus |
 | Voltage divider (ADC) | 33 | ADC1 input; measures charger output voltage |
-| Regulator enable | 13 | Enables the boost converter (was D5 on D1 mini; GPIO14 not available on T-Display) |
+| PD INT | 13 | PD trigger board (RotoPD Pro) interrupt output |
 | Fan PWM | 12 | LEDC PWM output |
 | TFT MOSI | 19 | Display SPI data |
 | TFT SCLK | 18 | Display SPI clock |
@@ -33,9 +33,3 @@ The serial monitor uses **115200 baud**. The required libraries are declared in
 | TFT DC | 16 | Display data/command |
 | TFT RST | 23 | Display reset |
 | TFT BL | 4 | Display backlight |
-
-## TODOs:
-
-- Spannungswandler Steuerung auf positive side controlled umstellen. Mit negeative side kann nicht der ganze Wandler
-abgeschaltet werden, sondern nur nach dem Ausgang des Wandlers, da über den digipot GND des VR mit dem allgemeinen GND
-verbunden ist. Dadurch wird ein low side MOSFET vor dem VR umgangen
