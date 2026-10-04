@@ -41,9 +41,6 @@ AP33772S::AP33772S(TwoWire &wire)
     _i2cPort = &wire;
 }
 
-/**
- * @brief Check if power supply is good and fetch the PDO profile
- */
 bool AP33772S::begin(TwoWire &wire)
 {
     _i2cPort = &wire;
@@ -122,16 +119,6 @@ bool AP33772S::requestFixedPDO(uint8_t pdoIndex)
     return i2c_write(AP33772S_ADDRESS, CMD_PD_REQMSG, 2);
 }
 
-bool AP33772S::requestPdoRaw(uint8_t pdoIndex, uint8_t currentSel)
-{
-    RDO_DATA_T rdo{};
-    rdo.REQMSG_Fields.PDO_INDEX   = pdoIndex;
-    rdo.REQMSG_Fields.CURRENT_SEL = currentSel;
-    writeBuf[0] = rdo.byte0;
-    writeBuf[1] = rdo.byte1;
-    return i2c_write(AP33772S_ADDRESS, CMD_PD_REQMSG, 2);
-}
-
 bool AP33772S::isFixedPdoAt(int pdoIndex) const
 {
     if (pdoIndex < 1 || pdoIndex > MAX_PDO_ENTRIES) return false;
@@ -190,30 +177,6 @@ void AP33772S::displayProfiles()
   writeBuf[0] = readBuf[0];
   i2c_write(AP33772S_ADDRESS, CMD_PD_CMDMSG, 1);
  }
-
-/**
- * @brief Host-initiated PD Hard Reset via PD_CMDMSG.HRST (bit 0).
- *        Instructs the sink controller to drop VBUS and re-attach, forcing a
- *        fresh PD negotiation. Used to recover from a stuck legacy (non-PD)
- *        latching state. This is a WO register - only ever write it.
- */
-bool AP33772S::hardReset()
-{
-    writeBuf[0] = 0x01; // bit0 = HRST
-    return i2c_write(AP33772S_ADDRESS, CMD_PD_CMDMSG, 1);
-}
-
-/**
- * @brief Read a raw 1-byte register. Returns false on I2C error (via readBuf).
- */
-bool AP33772S::readRawByte(uint8_t cmd, uint8_t &outVar)
-{
-    if (!i2c_read(AP33772S_ADDRESS, cmd, 1)) {
-        return false;
-    }
-    outVar = readBuf[0];
-    return true;
-}
 
 /**
  * @brief Decode PDO information from SRC_SPRandEPR_PDO_Fields
@@ -903,7 +866,7 @@ byte AP33772S::readMask()
 
 /*************LOW LEVEL HELPER FUNCTIONS***************/
 
-//** Need basic I2C function here */
+/** @brief Read register bytes; return false on an I2C error or short read. */
 bool AP33772S::i2c_read(byte slvAddr, byte cmdAddr, byte len)
 {
     // clear readBuffer
@@ -935,6 +898,7 @@ bool AP33772S::i2c_read(byte slvAddr, byte cmdAddr, byte len)
     return true;
 }
 
+/** @brief Write register bytes; return false on an I2C error. */
 bool AP33772S::i2c_write(byte slvAddr, byte cmdAddr, byte len)
 {
     _i2cPort->beginTransmission(slvAddr); // transmit to device SLAVE_ADDRESS
