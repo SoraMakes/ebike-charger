@@ -177,7 +177,10 @@ void PDManager::onAttachSettle(uint8_t status) {
         return;
     }
     _lastPdoPollMs = now;
-    _pd.refreshPdoTable();
+    if (!_pd.refreshPdoTable()) {
+        DiagLog::event("PDO refresh failed (attach)");
+        return;
+    }
     if (requestBestPdo()) {
         enter(PDNegotiationState::Requesting);
     }
@@ -232,7 +235,10 @@ void PDManager::onReady(uint8_t status) {
         return;
     }
     _stateEnteredAt = millis();
-    _pd.refreshPdoTable();
+    if (!_pd.refreshPdoTable()) {
+        DiagLog::event("PDO refresh failed (ready)");
+        return;
+    }
     const uint8_t bestPdo = findBestFixedPdo();
     // Same voltage must not renegotiate.
     const float bestVoltageV = (bestPdo != 0) ? _pd.getPdoVoltageV(bestPdo) : 0.0f;
@@ -253,7 +259,12 @@ bool PDManager::attemptRecovery() {
     _lastRecoveryMs = millis();
     _voltageJumped = true;
     _contractLostSinceMs = 0;
-    _pd.refreshPdoTable();
+    if (!_pd.refreshPdoTable()) {
+        DiagLog::event("PDO refresh failed (recovery)");
+        enter(PDNegotiationState::AttachSettle);
+        _lastPdoPollMs = 0;
+        return false;
+    }
     if (!requestBestPdo()) {
         enter(PDNegotiationState::AttachSettle);
         _lastPdoPollMs = 0;
