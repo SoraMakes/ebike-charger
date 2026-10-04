@@ -205,7 +205,7 @@ public:
   uint8_t readMsgResult();
 
   // PDO table access; all indices are 1-based (1..13) as in USB-PD RDOs
-  void refreshPdoTable();
+  bool refreshPdoTable();
   bool requestFixedPDO(uint8_t pdoIndex);
   /// Writes PD_REQMSG directly without checking PDO validity. Firing a request
   /// even when no capabilities are cached may prompt the chip to issue

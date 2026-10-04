@@ -59,21 +59,25 @@ bool AP33772S::begin()
     // Insufficient delay after I2C init before the capability request has
     // caused "no PDOs read" symptoms on other AP33772S boards. Give the chip
     // time to settle before reading the PDO table.
+    // This blocks startup configuration; attached sources may negotiate before
+    // CONFIG/MASK/SYSTEM are applied within the ~100 ms STARTED window.
     delay(1000);
-    refreshPdoTable();
-    return true;
+    return refreshPdoTable();
 }
 
-void AP33772S::refreshPdoTable()
+bool AP33772S::refreshPdoTable()
 {
+    if (!i2c_read(AP33772S_ADDRESS, CMD_SRCPDO, MAX_PDO_ENTRIES * 2)) {
+        return false;
+    }
     memset(SRC_SPRandEPRpdoArray, 0, sizeof(SRC_SPRandEPRpdoArray));
-    i2c_read(AP33772S_ADDRESS, CMD_SRCPDO, MAX_PDO_ENTRIES * 2);
     for (int i = 0; i < MAX_PDO_ENTRIES * 2; i += 2) {
         int pdoIndex = (i / 2);
         SRC_SPRandEPRpdoArray[pdoIndex].byte0 = readBuf[i];
         SRC_SPRandEPRpdoArray[pdoIndex].byte1 = readBuf[i + 1];
     }
     mapPPSAVSInfo();
+    return true;
 }
 
 bool AP33772S::setInterruptRegisterMask(uint8_t mask)
