@@ -11,47 +11,31 @@ void DisplayManager::begin() {
     _tft.setRotation(1);  // landscape
     _tft.fillScreen(TFT_BLACK);
     _tft.setTextDatum(TL_DATUM);
-    _tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    _tft.setTextColor(TFT_WHITE, TFT_BLACK);
     _tft.setTextSize(2);
 }
 
-void DisplayManager::showMessage(const char *msg) {
+void DisplayManager::showMessage(std::initializer_list<const char *> lines) {
     _tft.fillScreen(TFT_BLACK);
-    _tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    _tft.setTextSize(2);
-    // drawString ignores newline, split manually.
-    int y = 5;
-    const char *lineStart = msg;
-    for (const char *p = msg;; ++p) {
-        if (*p == '\n' || *p == '\0') {
-            const int len = static_cast<int>(p - lineStart);
-            if (len > 0) {
-                _tft.drawString(String(lineStart, len), 5, y);
-                y += 24;
-            }
-            if (*p == '\0') {
-                break;
-            }
-            lineStart = p + 1;
-        }
+    int y = 0;
+    for (const char *line : lines) {
+        _tft.drawString(line, 5, y);
+        y += 24;
     }
 }
 
 void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
                             const CurrentControl &current, const VoltageMonitor &voltage,
                             const PowerMonitor &power, const EfficiencyEstimator &efficiency) {
-    const float pdVoltageV = pd.getVoltage();
-    const float pdCurrentA = pd.getCurrent();
+    const float pdVoltageV       = pd.getVoltage();
+    const float pdCurrentA       = pd.getCurrent();
     const float measuredVoltageV = power.getInputVoltage();
     const float measuredCurrentA = power.getInputCurrent();
-    const float outputVoltageV = voltage.getVoltage();
-    const float currentLimitA  = current.getCurrentLimitA();
-    const float maxPowerW      = outputVoltageV * currentLimitA;
-    const float tempC          = thermal.getTemperatureC();
-    const float efficiencyPct  = efficiency.getEfficiency() * 100.0f;
-
-    _tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    _tft.setTextSize(2);
+    const float outputVoltageV   = voltage.getVoltage();
+    const float currentLimitA    = current.getCurrentLimitA();
+    const float maxPowerW        = outputVoltageV * currentLimitA;
+    const float tempC            = thermal.getTemperatureC();
+    const float efficiencyPct    = efficiency.getEfficiency() * 100.0f;
 
     // PD contract plus input.
     _tft.drawString("I " + String(pdVoltageV, 0) + "V/" + String(pdCurrentA, 1) + "A " +
@@ -61,8 +45,7 @@ void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
     _tft.drawString("Out: " + String(outputVoltageV, 1) + "V " + String(currentLimitA, 2) + "A ", 5, 35);
 
     // Output power plus input volts.
-    _tft.drawString("Max: " + String(maxPowerW, 1) + "W  in " +
-                     String(measuredVoltageV, 1) + "V", 5, 65);
+    _tft.drawString("Max: " + String(maxPowerW, 1) + "W  in " + String(measuredVoltageV, 1) + "V", 5, 65);
 
     // Temperature plus efficiency.
     _tft.drawString("Temp: " + String(tempC, 1) + "C " + String(efficiencyPct, 0) + "%", 5, 95);

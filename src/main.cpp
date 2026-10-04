@@ -163,7 +163,7 @@ void setup() {
 
     // Shutdown targets before sensors.
     while (!pdManager.begin(Wire, kPdIntPin)) {
-        displayManager.showMessage("PD controller\nnot found!");
+        displayManager.showMessage({"PD controller", "not found!"});
         delay(2000);
     }
 
