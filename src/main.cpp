@@ -14,6 +14,7 @@
 static constexpr int      I2C_SDA_PIN              = 21;
 static constexpr int      I2C_SCL_PIN              = 22;
 static constexpr float    kMinChargeVoltage        = 8.5f;  // Charger enable floor.
+static constexpr size_t   kSerialTxBufferSizeBytes = 2048;
 
 // Digital pins.
 static constexpr uint8_t kFanPin  = 12;  // Fan MOSFET driver.
@@ -147,6 +148,7 @@ static PeriodicTask pdDiagTask(2000, logSystemDiagnostics);
 static PeriodicTask diagHistoryTask(10000, dumpDiagnosticHistory);
 
 void setup() {
+    Serial.setTxBufferSize(kSerialTxBufferSizeBytes);
     Serial.begin(115200);
 
     Serial.println("\n\n=== USB PD Charger ===");
