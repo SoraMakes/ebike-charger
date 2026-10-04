@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <initializer_list>
 #include <TFT_eSPI.h>
 
 class PDManager;
@@ -16,7 +17,7 @@ public:
     void begin();
 
     /// Status message, visible when blocked.
-    void showMessage(const char *msg);
+    void showMessage(std::initializer_list<const char *> lines);
 
     void update(PDManager &pd, const ThermalManager &thermal,
                 const CurrentControl &current, const VoltageMonitor &voltage,
