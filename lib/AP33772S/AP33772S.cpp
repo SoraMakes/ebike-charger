@@ -260,6 +260,8 @@ void AP33772S::displayPDOInfo(int pdoIndex) {
  */
 void AP33772S::mapPPSAVSInfo()
 {
+  _indexPPSUser = -1;
+  _indexAVSUser = -1;
   for(int i = 1; i<=13; i++)
   {
     if(i < 8 && SRC_SPRandEPRpdoArray[i-1].pps.type == 1)
