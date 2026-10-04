@@ -6,7 +6,9 @@ static constexpr uint8_t kMCP4018Address = 0x2F; // hardware-fixed
 
 static constexpr uint8_t kMaxStep = 127;
 static constexpr uint32_t kIncreaseIntervalMs = 250;
+// Steps reserved for the slow, one-at-a-time approach to the target.
 static constexpr int16_t kFinalRampSteps = 4;
+// Current-limit digipot step divided by this value sets coarse ramp steps per interval.
 static constexpr int16_t kRampUpDivisor = 8;
 
 // Output-current calibration.
@@ -35,12 +37,12 @@ void CurrentControl::update(float limitWatts, bool noLoad) {
 
     const float targetAmps = limitWatts / outputVoltageV;
     const float currentLimitA = min(targetAmps, kMaxAllowedOutputAmps);
-    const int16_t targetLevel = ampsToStep(currentLimitA);
-    _targetLevel = targetLevel;
+    const int16_t currentLimitDigipotStep = ampsToStep(currentLimitA);
+    _currentLimitDigipotStep = currentLimitDigipotStep;
 
-    // No-load hold.
-    if (noLoad && targetLevel > kNoLoadHoldStep) {
-        _powerLevel = kNoLoadHoldStep;
+    // During no-load periods, hold the output at a low setpoint until load rises.
+    if (noLoad && currentLimitDigipotStep > kNoLoadHoldStep) {
+        _outputDigipotStep = kNoLoadHoldStep;
         _lastStepChangeAt = now;
         writeDigipot(static_cast<uint8_t>(kNoLoadHoldStep));
         return;
@@ -48,47 +50,47 @@ void CurrentControl::update(float limitWatts, bool noLoad) {
 
     const int16_t acceleratedTarget = max(
         static_cast<int16_t>(0),
-        static_cast<int16_t>(targetLevel - kFinalRampSteps)
+        static_cast<int16_t>(currentLimitDigipotStep - kFinalRampSteps)
     );
 
-    if (_powerLevel > targetLevel) {
-        _powerLevel = targetLevel;
-    } else if (_powerLevel < targetLevel) {
+    if (_outputDigipotStep > currentLimitDigipotStep) {
+        _outputDigipotStep = currentLimitDigipotStep;
+    } else if (_outputDigipotStep < currentLimitDigipotStep) {
         if (now - _lastStepChangeAt >= kIncreaseIntervalMs) {
             _lastStepChangeAt = now;
 
-            if (_powerLevel < acceleratedTarget) {
+            if (_outputDigipotStep < acceleratedTarget) {
                 const int16_t stepsPerIncrease = max(
                     static_cast<int16_t>(1),
-                    static_cast<int16_t>(targetLevel / kRampUpDivisor)
+                    static_cast<int16_t>(currentLimitDigipotStep / kRampUpDivisor)
                 );
-                _powerLevel = min(
-                    static_cast<int16_t>(_powerLevel + stepsPerIncrease),
+                _outputDigipotStep = min(
+                    static_cast<int16_t>(_outputDigipotStep + stepsPerIncrease),
                     acceleratedTarget
                 );
             } else {
                 // Final steps: one step per timer interval.
-                ++_powerLevel;
+                ++_outputDigipotStep;
             }
         }
     }
 
-    writeDigipot(static_cast<uint8_t>(_powerLevel));
+    writeDigipot(static_cast<uint8_t>(_outputDigipotStep));
 }
 
 void CurrentControl::minimumCurrent() {
-    _powerLevel = 0;
-    _targetLevel = 0;
+    _outputDigipotStep = 0;
+    _currentLimitDigipotStep = 0;
     _lastStepChangeAt = millis();
     writeDigipot(0);
 }
 
 float CurrentControl::getCurrentLimitA() const {
-    return kCurrentAtStepZeroA + static_cast<float>(_powerLevel) * kCurrentPerStepA;
+    return kCurrentAtStepZeroA + static_cast<float>(_outputDigipotStep) * kCurrentPerStepA;
 }
 
 bool CurrentControl::isRampUpFinished() const {
-    return _powerLevel >= _targetLevel;
+    return _outputDigipotStep >= _currentLimitDigipotStep;
 }
 
 void CurrentControl::writeDigipot(uint8_t step) {
