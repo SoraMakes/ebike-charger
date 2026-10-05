@@ -14,7 +14,6 @@ public:
     float getTemperatureC() const;
     float getOutputPowerLimitW() const;
     bool hasSensorFault() const;
-    bool isShutdownLatched() const;
 
 private:
     static constexpr uint16_t kPwmRange = 1023;

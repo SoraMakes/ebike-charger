@@ -17,13 +17,15 @@ public:
     bool begin(TwoWire &wire, int8_t intPin);
     void update();
 
-    // PD-input volts, not 5V aux.
+    /// Sets the measured USB-PD input voltage in volts; this is the PD input rail, not the 5 V auxiliary supply.
     void setMeasuredInputVoltage(float volts);
     bool isReady() const;
     bool justAttached() const;
     // Contract voltage changed while Ready.
     bool voltageJumped() const;
+    /// Active contract voltage, or zero unless the contract is ready.
     float getVoltage() const;
+    /// Active contract current, or zero unless the contract is ready.
     float getCurrent() const;
     /// Latched cut-out with reason.
     void shutdown(const char *reason = nullptr);
@@ -38,6 +40,8 @@ public:
     bool hasChipFault() const;
 
 private:
+    // Minimum PD voltage supported by the boost converter.
+    static constexpr float kMinChargeVoltageV = 8.5f;
     static constexpr float kMaxRequestVoltageV = 28.0f;
     static constexpr float kMinUsablePdoCurrentA = 1.25f;
     // Below this is sensor failure, not dead input.
@@ -91,4 +95,3 @@ private:
     float _inputVoltageV = 0.0f;
     bool _inputValid = false;
 };
-
