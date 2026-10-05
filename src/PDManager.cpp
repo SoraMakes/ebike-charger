@@ -296,7 +296,7 @@ uint8_t PDManager::findBestFixedPdo() const {
     float bestVoltageV = -1.0f;
     for (int pdo = 1; pdo <= MAX_PDO_ENTRIES; ++pdo) {
         const float voltageV = _pd.getPdoVoltageV(pdo);
-        if (voltageV <= 0.0f || voltageV > kMaxRequestVoltageV) {
+        if (voltageV < kMinChargeVoltageV || voltageV > kMaxRequestVoltageV) {
             continue;
         }
         // Unusable low-current bucket.
@@ -324,11 +324,11 @@ bool PDManager::voltageJumped() const {
 }
 
 float PDManager::getVoltage() const {
-    return _voltage;
+    return isReady() ? _voltage : 0.0f;
 }
 
 float PDManager::getCurrent() const {
-    return _current;
+    return isReady() ? _current : 0.0f;
 }
 
 void PDManager::shutdown(const char *reason) {

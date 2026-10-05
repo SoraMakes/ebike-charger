@@ -9,7 +9,7 @@ static constexpr float kShutdownTemperatureC = 50.0f;
 static constexpr float kMaximumThermalPowerW = 100.0f;
 static constexpr uint16_t kPwmRange = 1023;
 static constexpr uint32_t kFanPwmFrequencyHz = 16000;
-static constexpr uint16_t kFanMinimumDuty = 563;
+static constexpr uint16_t kFanMinimumDuty = static_cast<uint16_t>(kPwmRange * 0.55f);  // kPwmRange * <fan duty ratio>
 static constexpr uint16_t kFanFullDuty = kPwmRange;
 
 // Fan PWM channel.
@@ -88,10 +88,6 @@ float ThermalManager::getOutputPowerLimitW() const {
 
 bool ThermalManager::hasSensorFault() const {
     return _sensorFault;
-}
-
-bool ThermalManager::isShutdownLatched() const {
-    return _shutdownLatched;
 }
 
 void ThermalManager::applyFanPwm(uint16_t duty) const {
