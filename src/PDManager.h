@@ -62,6 +62,9 @@ private:
     uint8_t pollInputs(uint8_t &opMode);
     void handleChipRestart(uint8_t status);
     void handleProtectionTrip(uint8_t status);
+    bool contractLossConfirmed();
+    bool shouldRenegotiate(uint8_t status);
+    void beginRenegotiation();
     void onDisconnected(uint8_t status, uint8_t opMode);
     void onAttachSettle(uint8_t status);
     void onRequesting();
