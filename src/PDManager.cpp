@@ -157,6 +157,7 @@ void PDManager::handleProtectionTrip(uint8_t status) {
     }
 }
 
+// Disconnected is also the initial state on boot; wait for source detection.
 void PDManager::onDisconnected(uint8_t status, uint8_t opMode) {
     const bool chipStarted = (status & STARTED_MSK) != 0;
     const bool sourceDetected = (opMode & kOpModeSourceMask) != 0;
@@ -171,24 +172,21 @@ void PDManager::onDisconnected(uint8_t status, uint8_t opMode) {
 }
 
 void PDManager::onAttachSettle(uint8_t status) {
-    if (_nextRequestAllowedMs != 0 &&
-        static_cast<int32_t>(millis() - _nextRequestAllowedMs) < 0) {
-        return;
-    }
     const uint32_t now = millis();
-    const bool pollDue = (status & NEWPDO_MSK) ||
-                         (_lastPdoPollMs == 0) ||
-                         (now - _lastPdoPollMs >= kAttachSettlePollMs);
-    if (!pollDue) {
-        return;
-    }
-    _lastPdoPollMs = now;
-    if (!_pd.refreshPdoTable()) {
-        DiagLog::event("PDO refresh failed (attach)");
-        return;
-    }
-    if (requestBestPdo()) {
-        enter(PDNegotiationState::Requesting);
+    // Allow polling when no backoff is set or its deadline has passed.
+    const bool requestAllowed = _nextRequestAllowedMs == 0 || static_cast<int32_t>(now - _nextRequestAllowedMs) >= 0;
+    // Poll on new PDOs, the first pass, or when the polling interval elapses.
+    const bool pollDue = (status & NEWPDO_MSK) || (_lastPdoPollMs == 0) || (now - _lastPdoPollMs >= kAttachSettlePollMs);
+
+    if (requestAllowed && pollDue) {
+        _lastPdoPollMs = now;
+        if (!_pd.refreshPdoTable()) {
+            DiagLog::event("PDO refresh failed (attach)");
+            return;
+        }
+        if (requestBestPdo()) {
+            enter(PDNegotiationState::Requesting);
+        }
     }
 }
 
