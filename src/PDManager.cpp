@@ -45,7 +45,7 @@ void PDManager::setMeasuredInputVoltage(float volts) {
     _inputVoltageV = volts;
 }
 
-// Read-clear STATUS latch.
+// Read the read-clear STATUS register, retain flags for diagnostics, and log new protection faults.
 uint8_t PDManager::pollStatus() {
     const uint8_t status = _pd.readStatus();
     if (status == 0) {
@@ -54,13 +54,13 @@ uint8_t PDManager::pollStatus() {
     const uint8_t freshFaults = static_cast<uint8_t>(status & kFaultMask & ~_statusSticky);
     _statusSticky |= status;
     if (freshFaults != 0) {
-        DiagLog::event("chip fault %s", getFaultText());
+        DiagLog::event("chip fault %s", getProtectionFaultText());
     }
     return status;
 }
 
-// Latched protections, e.g. OCP OVP OTP.
-const char *PDManager::getFaultText() const {
+// Return names of protection faults recorded in the sticky STATUS flags.
+const char *PDManager::getProtectionFaultText() const {
     static char text[20];
     text[0] = '\0';
 
@@ -76,7 +76,7 @@ const char *PDManager::getFaultText() const {
     return text;
 }
 
-bool PDManager::hasChipFault() const {
+bool PDManager::hasProtectionFault() const {
     return (_statusSticky & kFaultMask) != 0;
 }
 
@@ -107,7 +107,7 @@ void PDManager::enter(PDNegotiationState state) {
     _stateEnteredAt = millis();
 }
 
-// Fast INT plus fallback poll; logs changes.
+// STATUS is read-clear and polled on INT/fallback; OPMODE is sampled each update for source detection.
 uint8_t PDManager::pollInputs(uint8_t &opMode) {
     uint8_t status = 0;
     if (digitalRead(_intPin) == HIGH) {
@@ -129,7 +129,8 @@ uint8_t PDManager::pollInputs(uint8_t &opMode) {
     return status;
 }
 
-// VBUS loss reboots; sags use contract-lost path.
+// STATUS.STARTED marks startup after VBUS/Rp detection; it does not prove the chip lost power.
+// Reapply configuration and resume negotiation for the current state.
 void PDManager::handleChipRestart(uint8_t status) {
     if (!(status & STARTED_MSK) || _state == PDNegotiationState::Disconnected) {
         return;

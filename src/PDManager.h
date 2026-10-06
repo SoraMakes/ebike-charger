@@ -36,8 +36,9 @@ public:
     uint8_t getStickyStatus() const { return _statusSticky; }
     uint8_t getOpMode() { return _pd.readOpMode(); }
     uint8_t getMsgResult() { return static_cast<uint8_t>(_pd.readMsgResult() & 0x07); }
-    const char *getFaultText() const;
-    bool hasChipFault() const;
+    const char *getProtectionFaultText() const;
+    /// True when sticky STATUS contains an AP33772S protection fault.
+    bool hasProtectionFault() const;
 
 private:
     // Minimum PD voltage supported by the boost converter.
