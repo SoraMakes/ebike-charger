@@ -36,6 +36,7 @@ void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
     const float maxPowerW        = outputVoltageV * currentLimitA;
     const float tempC            = thermal.getTemperatureC();
     const float efficiencyPct    = efficiency.getEfficiency() * 100.0f;
+    const char *pdFaultText      = pd.getProtectionFaultText();
 
     // PD contract plus input.
     _tft.drawString("I " + String(pdVoltageV, 0) + "V/" + String(pdCurrentA, 1) + "A " +
@@ -53,8 +54,8 @@ void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
     // Shutdown, chip fault, INA alert.
     if (pd.isShutdownLatched()) {
         _tft.drawString("STOP: " + String(pd.getShutdownReason()) + "      ", 5, 118);
-    } else if (pd.hasChipFault()) {
-        _tft.drawString("PD FAULT: " + String(pd.getFaultText()) + "     ", 5, 118);
+    } else if (pd.hasProtectionFault()) {
+        _tft.drawString("PD FAULT: " + String(pdFaultText) + "     ", 5, 118);
     } else if (power.hasAlert()) {
         _tft.drawString("INA FAULT: " + String(power.getAlertText()) + "    ", 5, 118);
     } else {
