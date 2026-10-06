@@ -338,8 +338,8 @@ uint8_t PDManager::findBestFixedPdo() const {
         if (voltageV < kMinChargeVoltageV || voltageV > kMaxRequestVoltageV) {
             continue;
         }
-        // Unusable low-current bucket.
-        if (_pd.getPdoMaxCurrentA(pdo) < kMinUsablePdoCurrentA) {
+        // Code-zero PDOs guarantee no minimum current.
+        if (_pd.getPdoMaxCurrentA(pdo) <= 0.0f) {
             continue;
         }
         if (voltageV > bestVoltageV) {

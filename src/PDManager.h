@@ -44,8 +44,6 @@ private:
     static constexpr float kMinChargeVoltageV = 8.5f;
     // Upper voltage limit requested from a source.
     static constexpr float kMaxRequestVoltageV = 28.0f;
-    // PDOs below this advertised current are not usable by the charger.
-    static constexpr float kMinUsablePdoCurrentA = 1.25f;
     // Relative rail tolerance for request validation and Ready-state monitoring.
     static constexpr float kVoltageToleranceFraction = 0.10f;
     // PDO-table refresh interval while waiting for attachment updates.
