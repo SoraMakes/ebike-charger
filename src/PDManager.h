@@ -21,8 +21,8 @@ public:
     void setMeasuredInputVoltage(float volts);
     bool isReady() const;
     bool justAttached() const;
-    // Contract voltage changed while Ready.
-    bool voltageJumped() const;
+    // True on an update pass that starts contract renegotiation or recovery.
+    bool contractChanged() const;
     /// Active contract voltage, or zero unless the contract is ready.
     float getVoltage() const;
     /// Active contract current, or zero unless the contract is ready.
@@ -42,10 +42,15 @@ public:
 private:
     // Minimum PD voltage supported by the boost converter.
     static constexpr float kMinChargeVoltageV = 8.5f;
+    // Upper voltage limit requested from a source.
     static constexpr float kMaxRequestVoltageV = 28.0f;
+    // PDOs below this advertised current are not usable by the charger.
     static constexpr float kMinUsablePdoCurrentA = 1.25f;
-    // Below this is sensor failure, not dead input.
+    // Lower readings are treated as invalid sensing, not proof of a dead contract.
     static constexpr float kInputValidMinV = 3.0f;
+    // Relative rail tolerance for request validation and Ready-state monitoring.
+    static constexpr float kVoltageToleranceFraction = 0.10f;
+    // PDO-table refresh interval while waiting for attachment updates.
     static constexpr uint32_t kAttachSettlePollMs = 150;
 
     bool requestBestPdo();
@@ -78,16 +83,14 @@ private:
     float   _current = 0.0f;
 
     bool _justAttached  = false;
-    bool _voltageJumped = false;
+    bool _contractChanged = false;
 
     bool _shutdownLatched = false;
     char _shutdownReason[17] = "";
     bool _configured      = false;
 
-    // CC legacy + PD source bits.
+    // OPMODE bits 0-1 indicate a legacy CC or PD source.
     static constexpr uint8_t kOpModeSourceMask = 0x03;
-    // VREQ match window.
-    static constexpr float kVoltageMatchV = 0.5f;
     uint8_t _statusSticky = 0;
     uint8_t _lastStatus = 0;
     uint8_t _lastOpMode = 0xFF;

@@ -70,7 +70,7 @@ static void updatePd() {
     pdManager.setMeasuredInputVoltage(powerMonitor.getInputVoltage());
     pdManager.update();
 
-    if (pdManager.voltageJumped()) {
+    if (pdManager.contractChanged()) {
         currentControl.minimumCurrent();
     }
 

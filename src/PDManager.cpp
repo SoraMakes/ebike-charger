@@ -5,15 +5,18 @@
 #include <math.h>
 #include <string.h>
 
-// INT-pin mask.
+// STATUS bits for undervoltage, overvoltage, overcurrent, and overtemperature faults.
+// These bits in the interrupt mask make those faults assert INT.
 static constexpr uint8_t kFaultMask = UVP_MSK | OVP_MSK | OCP_MSK | OTP_MSK;
+// Time allowed for a PD request to complete.
 static constexpr uint32_t kNegotiationTimeoutMs = 2000;
+// Interval between advertised PDO-table checks while Ready.
 static constexpr uint32_t kProfileRecheckMs = 500;
+// Fallback STATUS-read interval while the interrupt pin is inactive.
 static constexpr uint32_t kStatusPollMs = 500;
-// Dead below 75% of contract.
-static constexpr float kContractLiveFraction = 0.75f;
-// Dead-declare dwell.
+// Require a sustained rail drop before requesting a new contract.
 static constexpr uint32_t kContractLostMs = 300;
+// Minimum delay between recovery attempts and after a rejected request.
 static constexpr uint32_t kRecoveryBackoffMs = 2000;
 
 bool PDManager::begin(TwoWire &wire, int8_t intPin) {
@@ -80,7 +83,7 @@ bool PDManager::hasChipFault() const {
 
 void PDManager::update() {
     _justAttached = false;
-    _voltageJumped = false;
+    _contractChanged = false;
     if (_shutdownLatched) {
         _pd.setOutput(0);
         return;
@@ -187,11 +190,15 @@ void PDManager::onAttachSettle(uint8_t status) {
 }
 
 void PDManager::onRequesting() {
-    // Msg success + VREQ match + input arrival.
+    // Message success plus matching voltage, current, and measured input rail.
     const uint8_t msgResult = static_cast<uint8_t>(_pd.readMsgResult() & 0x07);
     const float activeVoltage = _pd.readVREQ() / 1000.0f;
-    const bool voltageMatched = _voltage > 0.0f && fabsf(activeVoltage - _voltage) <= kVoltageMatchV;
-    const bool inputArrived = !_inputValid || (_voltage > 0.0f && _inputVoltageV >= _voltage * kContractLiveFraction);
+    const bool voltageMatched = _voltage > 0.0f &&
+        fabsf(activeVoltage - _voltage) <= _voltage * kVoltageToleranceFraction;
+    const float activeCurrent = _pd.readIREQ() / 1000.0f;
+    const bool currentMatched = _current > 0.0f && activeCurrent == _current;
+    const float minimumInputVoltage = _voltage * (1.0f - kVoltageToleranceFraction);
+    const bool inputArrived = !_inputValid || (_voltage > 0.0f && _inputVoltageV >= minimumInputVoltage);
     if (msgResult >= 2) {
         _voltage = 0.0f;
         _current = 0.0f;
@@ -199,7 +206,7 @@ void PDManager::onRequesting() {
         enter(PDNegotiationState::AttachSettle);
         return;
     }
-    if (msgResult == 1 && voltageMatched && inputArrived) {
+    if (msgResult == 1 && voltageMatched && currentMatched && inputArrived) {
         enter(PDNegotiationState::Ready);
         // Granted voltage/current.
         const int grantedVreqMv = _pd.readVREQ();
@@ -217,9 +224,11 @@ void PDManager::onRequesting() {
     }
 }
 
+// Monitor the active contract for rail loss or source-profile changes.
 void PDManager::onReady(uint8_t status) {
-    // Dead contract via input volts; fail-open.
-    if (_inputValid && _voltage > 0.0f && _inputVoltageV < _voltage * kContractLiveFraction) {
+    const bool railBelowTolerance = _inputValid && _voltage > 0.0f &&
+        _inputVoltageV < _voltage * (1.0f - kVoltageToleranceFraction);
+    if (railBelowTolerance) {
         if (_contractLostSinceMs == 0) {
             _contractLostSinceMs = millis();
         }
@@ -230,25 +239,40 @@ void PDManager::onReady(uint8_t status) {
     } else {
         _contractLostSinceMs = 0;
     }
-    const bool dueForRecheck = (status & NEWPDO_MSK) || (millis() - _stateEnteredAt >= kProfileRecheckMs);
-    if (!dueForRecheck) {
-        return;
-    }
-    _stateEnteredAt = millis();
-    if (!_pd.refreshPdoTable()) {
-        DiagLog::event("PDO refresh failed (ready)");
-        return;
-    }
-    const uint8_t bestPdo = findBestFixedPdo();
-    // Same voltage must not renegotiate.
-    const float bestVoltageV = (bestPdo != 0) ? _pd.getPdoVoltageV(bestPdo) : 0.0f;
-    if (bestPdo != 0 && fabsf(bestVoltageV - _voltage) > kVoltageMatchV) {
-        DiagLog::event("contract %.0fV->%.0fV", _voltage, bestVoltageV);
-        _voltageJumped = true;
-        if (requestBestPdo()) {
-            enter(PDNegotiationState::Requesting);
+
+    if (status & NEWPDO_MSK) {
+        DiagLog::event("new PDOs; renegotiating contract");
+    } else {
+        if (millis() - _stateEnteredAt < kProfileRecheckMs) {
+            return;
         }
+        _stateEnteredAt = millis();
+        if (!_pd.refreshPdoTable()) {
+            DiagLog::event("PDO refresh failed (ready)");
+            return;
+        }
+        const uint8_t bestPdo = findBestFixedPdo();
+        if (bestPdo == 0) {
+            return;
+        }
+
+        const float bestVoltageV = _pd.getPdoVoltageV(bestPdo);
+        const float bestCurrentA = _pd.getPdoMaxCurrentA(bestPdo);
+        const bool voltageChanged = _voltage > 0.0f &&
+            fabsf(bestVoltageV - _voltage) > _voltage * kVoltageToleranceFraction;
+        const bool currentChanged = bestCurrentA != _current;
+        if (!voltageChanged && !currentChanged) {
+            return;
+        }
+        DiagLog::event("contract %.0fV/%.1fA->%.0fV/%.1fA",
+                       _voltage, _current, bestVoltageV, bestCurrentA);
     }
+
+    _voltage = 0.0f;
+    _current = 0.0f;
+    _contractChanged = true;
+    enter(PDNegotiationState::AttachSettle);
+    _lastPdoPollMs = 0;
 }
 
 // Re-request after trip/restart/loss.
@@ -257,7 +281,7 @@ bool PDManager::attemptRecovery() {
         return false;
     }
     _lastRecoveryMs = millis();
-    _voltageJumped = true;
+    _contractChanged = true;
     _contractLostSinceMs = 0;
     if (!_pd.refreshPdoTable()) {
         DiagLog::event("PDO refresh failed (recovery)");
@@ -319,8 +343,8 @@ bool PDManager::justAttached() const {
     return _justAttached;
 }
 
-bool PDManager::voltageJumped() const {
-    return _voltageJumped;
+bool PDManager::contractChanged() const {
+    return _contractChanged;
 }
 
 float PDManager::getVoltage() const {
