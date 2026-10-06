@@ -46,8 +46,6 @@ private:
     static constexpr float kMaxRequestVoltageV = 28.0f;
     // PDOs below this advertised current are not usable by the charger.
     static constexpr float kMinUsablePdoCurrentA = 1.25f;
-    // Lower readings are treated as invalid sensing, not proof of a dead contract.
-    static constexpr float kInputValidMinV = 3.0f;
     // Relative rail tolerance for request validation and Ready-state monitoring.
     static constexpr float kVoltageToleranceFraction = 0.10f;
     // PDO-table refresh interval while waiting for attachment updates.
@@ -97,7 +95,6 @@ private:
     uint8_t _statusSticky = 0;
     uint8_t _lastStatus = 0;
     uint8_t _lastOpMode = 0xFF;
-    // PD-input volts; fail-open when invalid.
+    // PD-input volts.
     float _inputVoltageV = 0.0f;
-    bool _inputValid = false;
 };

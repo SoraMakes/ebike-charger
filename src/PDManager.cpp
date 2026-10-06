@@ -43,7 +43,6 @@ void PDManager::applyStartupConfig() {
 
 void PDManager::setMeasuredInputVoltage(float volts) {
     _inputVoltageV = volts;
-    _inputValid = isfinite(volts) && (volts >= kInputValidMinV);
 }
 
 // Read-clear STATUS latch.
@@ -201,7 +200,8 @@ void PDManager::onRequesting() {
     const float activeCurrent = _pd.readIREQ() / 1000.0f;
     const bool currentMatched = _current > 0.0f && activeCurrent == _current;
     const float minimumInputVoltage = _voltage * (1.0f - kVoltageToleranceFraction);
-    const bool inputArrived = !_inputValid || (_voltage > 0.0f && _inputVoltageV >= minimumInputVoltage);
+    const bool inputArrived = isfinite(_inputVoltageV) && _voltage > 0.0f &&
+        _inputVoltageV >= minimumInputVoltage;
     if (msgResult >= 2) {
         _voltage = 0.0f;
         _current = 0.0f;
@@ -238,7 +238,7 @@ void PDManager::onReady(uint8_t status) {
 
 bool PDManager::contractLossConfirmed() {
     const uint32_t now = millis();
-    const bool railBelowTolerance = _inputValid && _voltage > 0.0f &&
+    const bool railBelowTolerance = isfinite(_inputVoltageV) && _voltage > 0.0f &&
         _inputVoltageV < _voltage * (1.0f - kVoltageToleranceFraction);
     if (!railBelowTolerance) {
         _contractLostSinceMs = 0;
