@@ -140,10 +140,13 @@ void PDManager::handleChipRestart(uint8_t status) {
     applyStartupConfig();
     if (_state == PDNegotiationState::Ready) {
         attemptRecovery();
-    } else if (_state == PDNegotiationState::AttachSettle) {
-        enter(PDNegotiationState::AttachSettle);
-        _nextRequestAllowedMs = 0;
-        _lastPdoPollMs = 0;
+    } else {
+        _pd.setOutput(0);
+        if (_state == PDNegotiationState::AttachSettle) {
+            enter(PDNegotiationState::AttachSettle);
+            _nextRequestAllowedMs = 0;
+            _lastPdoPollMs = 0;
+        }
     }
 }
 
@@ -161,7 +164,7 @@ void PDManager::onDisconnected(uint8_t status, uint8_t opMode) {
         return;
     }
     applyStartupConfig();
-    _pd.setOutput(1);
+    _pd.setOutput(0);
     enter(PDNegotiationState::AttachSettle);
     _lastPdoPollMs = 0;
     _nextRequestAllowedMs = 0;
@@ -226,48 +229,62 @@ void PDManager::onRequesting() {
 
 // Monitor the active contract for rail loss or source-profile changes.
 void PDManager::onReady(uint8_t status) {
+    if (contractLossConfirmed()) {
+        attemptRecovery();
+    } else if (shouldRenegotiate(status)) {
+        beginRenegotiation();
+    }
+}
+
+bool PDManager::contractLossConfirmed() {
+    const uint32_t now = millis();
     const bool railBelowTolerance = _inputValid && _voltage > 0.0f &&
         _inputVoltageV < _voltage * (1.0f - kVoltageToleranceFraction);
-    if (railBelowTolerance) {
-        if (_contractLostSinceMs == 0) {
-            _contractLostSinceMs = millis();
-        }
-        if (millis() - _contractLostSinceMs >= kContractLostMs) {
-            attemptRecovery();
-            return;
-        }
-    } else {
+    if (!railBelowTolerance) {
         _contractLostSinceMs = 0;
+        return false;
     }
 
+    if (_contractLostSinceMs == 0) {
+        _contractLostSinceMs = now;
+    }
+    return now - _contractLostSinceMs >= kContractLostMs;
+}
+
+bool PDManager::shouldRenegotiate(uint8_t status) {
     if (status & NEWPDO_MSK) {
         DiagLog::event("new PDOs; renegotiating contract");
-    } else {
-        if (millis() - _stateEnteredAt < kProfileRecheckMs) {
-            return;
-        }
-        _stateEnteredAt = millis();
-        if (!_pd.refreshPdoTable()) {
-            DiagLog::event("PDO refresh failed (ready)");
-            return;
-        }
-        const uint8_t bestPdo = findBestFixedPdo();
-        if (bestPdo == 0) {
-            return;
-        }
-
-        const float bestVoltageV = _pd.getPdoVoltageV(bestPdo);
-        const float bestCurrentA = _pd.getPdoMaxCurrentA(bestPdo);
-        const bool voltageChanged = _voltage > 0.0f &&
-            fabsf(bestVoltageV - _voltage) > _voltage * kVoltageToleranceFraction;
-        const bool currentChanged = bestCurrentA != _current;
-        if (!voltageChanged && !currentChanged) {
-            return;
-        }
-        DiagLog::event("contract %.0fV/%.1fA->%.0fV/%.1fA",
-                       _voltage, _current, bestVoltageV, bestCurrentA);
+        return true;
+    }
+    const uint32_t now = millis();
+    if (now - _stateEnteredAt < kProfileRecheckMs) {
+        return false;
+    }
+    _stateEnteredAt = now;
+    if (!_pd.refreshPdoTable()) {
+        DiagLog::event("PDO refresh failed (ready)");
+        return false;
     }
 
+    const uint8_t bestPdo = findBestFixedPdo();
+    if (bestPdo == 0) {
+        return false;
+    }
+    const float bestVoltageV = _pd.getPdoVoltageV(bestPdo);
+    const float bestCurrentA = _pd.getPdoMaxCurrentA(bestPdo);
+    const bool voltageChanged = _voltage > 0.0f &&
+        fabsf(bestVoltageV - _voltage) > _voltage * kVoltageToleranceFraction;
+    const bool currentChanged = bestCurrentA != _current;
+    if (!voltageChanged && !currentChanged) {
+        return false;
+    }
+    DiagLog::event("contract %.0fV/%.1fA->%.0fV/%.1fA",
+                   _voltage, _current, bestVoltageV, bestCurrentA);
+    return true;
+}
+
+void PDManager::beginRenegotiation() {
+    _pd.setOutput(0);
     _voltage = 0.0f;
     _current = 0.0f;
     _contractChanged = true;
@@ -277,21 +294,19 @@ void PDManager::onReady(uint8_t status) {
 
 // Re-request after trip/restart/loss.
 bool PDManager::attemptRecovery() {
+    beginRenegotiation();
+    _contractLostSinceMs = 0;
+    const uint32_t now = millis();
     if (_lastRecoveryMs != 0 && millis() - _lastRecoveryMs < kRecoveryBackoffMs) {
+        _nextRequestAllowedMs = _lastRecoveryMs + kRecoveryBackoffMs;
         return false;
     }
-    _lastRecoveryMs = millis();
-    _contractChanged = true;
-    _contractLostSinceMs = 0;
+    _lastRecoveryMs = now;
     if (!_pd.refreshPdoTable()) {
         DiagLog::event("PDO refresh failed (recovery)");
-        enter(PDNegotiationState::AttachSettle);
-        _lastPdoPollMs = 0;
         return false;
     }
     if (!requestBestPdo()) {
-        enter(PDNegotiationState::AttachSettle);
-        _lastPdoPollMs = 0;
         return false;
     }
     enter(PDNegotiationState::Requesting);
