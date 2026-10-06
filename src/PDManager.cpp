@@ -140,13 +140,13 @@ void PDManager::handleChipRestart(uint8_t status) {
     applyStartupConfig();
     if (_state == PDNegotiationState::Ready) {
         attemptRecovery();
+    } else if (_state == PDNegotiationState::Requesting) {
+        beginRenegotiation();
+        _nextRequestAllowedMs = 0;
     } else {
         _pd.setOutput(0);
-        if (_state == PDNegotiationState::AttachSettle) {
-            enter(PDNegotiationState::AttachSettle);
-            _nextRequestAllowedMs = 0;
-            _lastPdoPollMs = 0;
-        }
+        _nextRequestAllowedMs = 0;
+        _lastPdoPollMs = 0;
     }
 }
 
