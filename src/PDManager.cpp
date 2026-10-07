@@ -354,24 +354,27 @@ bool PDManager::requestBestPdo() {
     return true;
 }
 
+/// Select the highest-voltage fixed PDO within the supported request range.
+/// @return the 1-based PDO index, or 0 if no usable PDO exists.
 uint8_t PDManager::findBestFixedPdo() const {
-    uint8_t bestPdo = 0;
-    float bestVoltageV = -1.0f;
-    for (int pdo = 1; pdo <= MAX_PDO_ENTRIES; ++pdo) {
-        const float voltageV = _pd.getPdoVoltageV(pdo);
-        if (voltageV < kMinChargeVoltageV || voltageV > kMaxRequestVoltageV) {
+    uint8_t bestPdoIndex = 0;
+    float bestVoltageV = 0.0f;
+    for (int pdoIndex = 1; pdoIndex <= MAX_PDO_ENTRIES; ++pdoIndex) {
+        const float pdoVoltageV = _pd.getPdoVoltageV(pdoIndex);
+        if (pdoVoltageV < kMinChargeVoltageV || pdoVoltageV > kMaxRequestVoltageV) {
             continue;
         }
-        // Code-zero PDOs guarantee no minimum current.
-        if (_pd.getPdoMaxCurrentA(pdo) <= 0.0f) {
+        // Ignore PDOs whose advertised current does not guarantee a positive minimum.
+        const float maxCurrentA = _pd.getPdoMaxCurrentA(pdoIndex);
+        if (maxCurrentA <= 0.0f) {
             continue;
         }
-        if (voltageV > bestVoltageV) {
-            bestVoltageV = voltageV;
-            bestPdo      = static_cast<uint8_t>(pdo);
+        if (pdoVoltageV > bestVoltageV) {
+            bestVoltageV = pdoVoltageV;
+            bestPdoIndex = static_cast<uint8_t>(pdoIndex);
         }
     }
-    return bestPdo;
+    return bestPdoIndex;
 }
 
 bool PDManager::isReady() const {
