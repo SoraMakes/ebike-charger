@@ -235,13 +235,18 @@ void PDManager::onRequestAccepted() {
 void PDManager::onReady(uint8_t status) {
     if (contractLossConfirmed()) {
         attemptRecovery();
-    } else if (shouldRenegotiate(status)) {
+        return;
+    }
+
+    if (shouldRenegotiate(status)) {
         beginRenegotiation();
     }
 }
 
+// Returns true after the rail remains below the contract tolerance for the confirmation period.
 bool PDManager::contractLossConfirmed() {
     const uint32_t now = millis();
+    // True when a valid measured rail is below the active contract tolerance.
     const bool railBelowTolerance = isfinite(_inputVoltageV) && _voltage > 0.0f &&
         _inputVoltageV < _voltage * (1.0f - kVoltageToleranceFraction);
     if (!railBelowTolerance) {
@@ -260,6 +265,14 @@ bool PDManager::shouldRenegotiate(uint8_t status) {
         DiagLog::event("new PDOs; renegotiating contract");
         return true;
     }
+
+    if (!refreshPdoTableIfDue()) {
+        return false;
+    }
+    return detectBestPdoContractChange();
+}
+
+bool PDManager::refreshPdoTableIfDue() {
     const uint32_t now = millis();
     if (now - _stateEnteredAt < kProfileRecheckMs) {
         return false;
@@ -269,21 +282,24 @@ bool PDManager::shouldRenegotiate(uint8_t status) {
         DiagLog::event("PDO refresh failed (ready)");
         return false;
     }
+    return true;
+}
 
+bool PDManager::detectBestPdoContractChange() {
     const uint8_t bestPdo = findBestFixedPdo();
+    // No fixed PDO meets the voltage and current requirements.
     if (bestPdo == 0) {
         return false;
     }
     const float bestVoltageV = _pd.getPdoVoltageV(bestPdo);
     const float bestCurrentA = _pd.getPdoMaxCurrentA(bestPdo);
-    const bool voltageChanged = _voltage > 0.0f &&
-        fabsf(bestVoltageV - _voltage) > _voltage * kVoltageToleranceFraction;
+    // A selected PDO voltage change requires a new contract.
+    const bool voltageChanged = bestVoltageV != _voltage;
     const bool currentChanged = bestCurrentA != _current;
     if (!voltageChanged && !currentChanged) {
         return false;
     }
-    DiagLog::event("contract %.0fV/%.1fA->%.0fV/%.1fA",
-                   _voltage, _current, bestVoltageV, bestCurrentA);
+    DiagLog::event("contract %.0fV/%.1fA->%.0fV/%.1fA", _voltage, _current, bestVoltageV, bestCurrentA);
     return true;
 }
 
