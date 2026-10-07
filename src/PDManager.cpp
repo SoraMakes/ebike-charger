@@ -95,7 +95,7 @@ void PDManager::update() {
 
     switch (_state) {
         case PDNegotiationState::Disconnected: onDisconnected(status, opMode); break;
-        case PDNegotiationState::AttachSettle: onAttachSettle(status); break;
+        case PDNegotiationState::WaitingForSourceCapabilities: onWaitingForSourceCapabilities(status); break;
         case PDNegotiationState::Requesting: onRequesting(); break;
         case PDNegotiationState::Ready: onReady(status); break;
     }
@@ -166,17 +166,18 @@ void PDManager::onDisconnected(uint8_t status, uint8_t opMode) {
     }
     applyStartupConfig();
     _pd.setOutput(0);
-    enter(PDNegotiationState::AttachSettle);
+    enter(PDNegotiationState::WaitingForSourceCapabilities);
     _lastPdoPollMs = 0;
     _nextRequestAllowedMs = 0;
 }
 
-void PDManager::onAttachSettle(uint8_t status) {
+void PDManager::onWaitingForSourceCapabilities(uint8_t status) {
     const uint32_t now = millis();
     // Allow polling when no backoff is set or its deadline has passed.
     const bool requestAllowed = _nextRequestAllowedMs == 0 || static_cast<int32_t>(now - _nextRequestAllowedMs) >= 0;
     // Poll on new PDOs, the first pass, or when the polling interval elapses.
-    const bool pollDue = (status & NEWPDO_MSK) || (_lastPdoPollMs == 0) || (now - _lastPdoPollMs >= kAttachSettlePollMs);
+    const bool pollDue = (status & NEWPDO_MSK) || (_lastPdoPollMs == 0) ||
+        (now - _lastPdoPollMs >= kSourceCapabilitiesPollMs);
 
     if (requestAllowed && pollDue) {
         _lastPdoPollMs = now;
@@ -190,40 +191,44 @@ void PDManager::onAttachSettle(uint8_t status) {
     }
 }
 
+// Entered after sending a PDO request until it is confirmed, rejected, or times out.
 void PDManager::onRequesting() {
-    // Message success plus matching voltage, current, and measured input rail.
-    const uint8_t msgResult = static_cast<uint8_t>(_pd.readMsgResult() & 0x07);
-    const float activeVoltage = _pd.readVREQ() / 1000.0f;
-    const bool voltageMatched = _voltage > 0.0f &&
-        fabsf(activeVoltage - _voltage) <= _voltage * kVoltageToleranceFraction;
-    const float activeCurrent = _pd.readIREQ() / 1000.0f;
-    const bool currentMatched = _current > 0.0f && activeCurrent == _current;
-    const float minimumInputVoltage = _voltage * (1.0f - kVoltageToleranceFraction);
-    const bool inputArrived = isfinite(_inputVoltageV) && _voltage > 0.0f &&
-        _inputVoltageV >= minimumInputVoltage;
-    if (msgResult >= 2) {
-        _voltage = 0.0f;
-        _current = 0.0f;
-        _nextRequestAllowedMs = millis() + kRecoveryBackoffMs;
-        enter(PDNegotiationState::AttachSettle);
+    // The controller reports 0 while pending, 1 on success, and 2 or higher on rejection.
+    const uint8_t response = static_cast<uint8_t>(_pd.readMsgResult() & 0x07);
+    if (response >= 2) {
+        onRequestRejected();
         return;
     }
-    if (msgResult == 1 && voltageMatched && currentMatched && inputArrived) {
-        enter(PDNegotiationState::Ready);
-        // Granted voltage/current.
-        const int grantedVreqMv = _pd.readVREQ();
-        const int grantedIreqMa = _pd.readIREQ();
-        if (grantedVreqMv > 0) { _voltage = grantedVreqMv / 1000.0f; }
-        if (grantedIreqMa > 0) { _current = grantedIreqMa / 1000.0f; }
-        _justAttached = true;
-        _contractLostSinceMs = 0;
-        _pd.setOutput(1);
-        DiagLog::event("contract %.0fV %.1fA", _voltage, _current);
+
+    if (response == 1 && contractMatchesRequest()) {
+        onRequestAccepted();
         return;
     }
+
     if (millis() - _stateEnteredAt >= kNegotiationTimeoutMs) {
-        enter(PDNegotiationState::AttachSettle);
+        enter(PDNegotiationState::WaitingForSourceCapabilities);
     }
+}
+
+bool PDManager::contractMatchesRequest() {
+    const float activeVoltageV = _pd.readVREQ() / 1000.0f;
+    const float activeCurrentA = _pd.readIREQ() / 1000.0f;
+    return activeVoltageV == _voltage && activeCurrentA == _current;
+}
+
+void PDManager::onRequestRejected() {
+    _voltage = 0.0f;
+    _current = 0.0f;
+    _nextRequestAllowedMs = millis() + kRecoveryBackoffMs;
+    enter(PDNegotiationState::WaitingForSourceCapabilities);
+}
+
+void PDManager::onRequestAccepted() {
+    enter(PDNegotiationState::Ready);
+    _justAttached = true;
+    _contractLostSinceMs = 0;
+    _pd.setOutput(1);
+    DiagLog::event("contract %.0fV %.1fA", _voltage, _current);
 }
 
 // Monitor the active contract for rail loss or source-profile changes.
@@ -287,7 +292,7 @@ void PDManager::beginRenegotiation() {
     _voltage = 0.0f;
     _current = 0.0f;
     _contractChanged = true;
-    enter(PDNegotiationState::AttachSettle);
+    enter(PDNegotiationState::WaitingForSourceCapabilities);
     _lastPdoPollMs = 0;
 }
 
