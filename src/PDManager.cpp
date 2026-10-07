@@ -30,7 +30,6 @@ bool PDManager::begin(TwoWire &wire, int8_t intPin) {
     return ok;
 }
 
-// Once after STARTED.
 void PDManager::applyStartupConfig() {
     if (_configured) {
         return;
@@ -45,7 +44,6 @@ void PDManager::setMeasuredInputVoltage(float volts) {
     _inputVoltageV = volts;
 }
 
-// Read the read-clear STATUS register, retain flags for diagnostics, and log new protection faults.
 uint8_t PDManager::pollStatus() {
     const uint8_t status = _pd.readStatus();
     if (status == 0) {
@@ -59,7 +57,6 @@ uint8_t PDManager::pollStatus() {
     return status;
 }
 
-// Return names of protection faults recorded in the sticky STATUS flags.
 const char *PDManager::getProtectionFaultText() const {
     static char text[20];
     text[0] = '\0';
@@ -101,7 +98,6 @@ void PDManager::update() {
     }
 }
 
-// Shared state entry.
 void PDManager::enter(PDNegotiationState state) {
     _state = state;
     _stateEnteredAt = millis();
@@ -129,8 +125,6 @@ uint8_t PDManager::pollInputs(uint8_t &opMode) {
     return status;
 }
 
-// STATUS.STARTED marks startup after VBUS/Rp detection; it does not prove the chip lost power.
-// Reapply configuration and resume negotiation for the current state.
 void PDManager::handleChipRestart(uint8_t status) {
     if (!(status & STARTED_MSK) || _state == PDNegotiationState::Disconnected) {
         return;
@@ -150,14 +144,12 @@ void PDManager::handleChipRestart(uint8_t status) {
     }
 }
 
-// Trip leaves VOUT open until re-request.
 void PDManager::handleProtectionTrip(uint8_t status) {
     if ((status & kFaultMask) && _state == PDNegotiationState::Ready) {
         attemptRecovery();
     }
 }
 
-// Disconnected is also the initial state on boot; wait for source detection.
 void PDManager::onDisconnected(uint8_t status, uint8_t opMode) {
     const bool chipStarted = (status & STARTED_MSK) != 0;
     const bool sourceDetected = (opMode & kOpModeSourceMask) != 0;
@@ -191,7 +183,6 @@ void PDManager::onWaitingForSourceCapabilities(uint8_t status) {
     }
 }
 
-// Entered after sending a PDO request until it is confirmed, rejected, or times out.
 void PDManager::onRequesting() {
     // The controller reports 0 while pending, 1 on success, and 2 or higher on rejection.
     const uint8_t response = static_cast<uint8_t>(_pd.readMsgResult() & 0x07);
@@ -231,7 +222,6 @@ void PDManager::onRequestAccepted() {
     DiagLog::event("contract %.0fV %.1fA", _voltage, _current);
 }
 
-// Monitor the active contract for rail loss or source-profile changes.
 void PDManager::onReady(uint8_t status) {
     if (contractLossConfirmed()) {
         attemptRecovery();
@@ -243,7 +233,6 @@ void PDManager::onReady(uint8_t status) {
     }
 }
 
-// Returns true after the rail remains below the contract tolerance for the confirmation period.
 bool PDManager::contractLossConfirmed() {
     const uint32_t now = millis();
     // True when a valid measured rail is below the active contract tolerance.
@@ -303,7 +292,6 @@ bool PDManager::detectBestPdoContractChange() {
     return true;
 }
 
-// Disable the output and return to source-capability polling for a new contract.
 void PDManager::beginRenegotiation() {
     _pd.setOutput(0);
     _voltage = 0.0f;
@@ -314,7 +302,6 @@ void PDManager::beginRenegotiation() {
     _lastPdoPollMs = 0;
 }
 
-// Re-request after trip/restart/loss.
 bool PDManager::attemptRecovery() {
     beginRenegotiation();
     _contractLostSinceMs = 0;
@@ -337,8 +324,6 @@ bool PDManager::attemptRecovery() {
     return true;
 }
 
-/// Request the best usable fixed PDO and store its voltage/current.
-/// @return true if sent; false if no usable PDO exists or the request fails.
 bool PDManager::requestBestPdo() {
     const uint8_t bestPdo = findBestFixedPdo();
     if (bestPdo == 0) {
@@ -354,8 +339,6 @@ bool PDManager::requestBestPdo() {
     return true;
 }
 
-/// Select the highest-voltage fixed PDO within the supported request range.
-/// @return the 1-based PDO index, or 0 if no usable PDO exists.
 uint8_t PDManager::findBestFixedPdo() const {
     uint8_t bestPdoIndex = 0;
     float bestVoltageV = 0.0f;
