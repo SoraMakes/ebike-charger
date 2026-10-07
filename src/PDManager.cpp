@@ -303,12 +303,14 @@ bool PDManager::detectBestPdoContractChange() {
     return true;
 }
 
+// Disable the output and return to source-capability polling for a new contract.
 void PDManager::beginRenegotiation() {
     _pd.setOutput(0);
     _voltage = 0.0f;
     _current = 0.0f;
     _contractChanged = true;
     enter(PDNegotiationState::WaitingForSourceCapabilities);
+    // Make the next source-capability poll run immediately.
     _lastPdoPollMs = 0;
 }
 
@@ -317,7 +319,9 @@ bool PDManager::attemptRecovery() {
     beginRenegotiation();
     _contractLostSinceMs = 0;
     const uint32_t now = millis();
-    if (_lastRecoveryMs != 0 && millis() - _lastRecoveryMs < kRecoveryBackoffMs) {
+    // True while a previous recovery attempt is still within its retry backoff.
+    const bool recoveryBackoffActive = _lastRecoveryMs != 0 && now - _lastRecoveryMs < kRecoveryBackoffMs;
+    if (recoveryBackoffActive) {
         _nextRequestAllowedMs = _lastRecoveryMs + kRecoveryBackoffMs;
         return false;
     }
@@ -333,20 +337,20 @@ bool PDManager::attemptRecovery() {
     return true;
 }
 
+/// Request the best usable fixed PDO and store its voltage/current.
+/// @return true if sent; false if no usable PDO exists or the request fails.
 bool PDManager::requestBestPdo() {
     const uint8_t bestPdo = findBestFixedPdo();
     if (bestPdo == 0) {
         return false;
     }
 
-    const float voltage    = _pd.getPdoVoltageV(bestPdo);
-    const float maxCurrent = _pd.getPdoMaxCurrentA(bestPdo);
     if (!_pd.requestFixedPDO(bestPdo)) {
         return false;
     }
 
-    _voltage        = voltage;
-    _current        = maxCurrent;
+    _voltage = _pd.getPdoVoltageV(bestPdo);
+    _current = _pd.getPdoMaxCurrentA(bestPdo);
     return true;
 }
 
