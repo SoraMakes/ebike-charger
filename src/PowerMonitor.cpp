@@ -2,22 +2,30 @@
 #include "DiagLog.h"
 #include <string.h>
 
-// 5mOhm shunt, 7A max.
+// INA238 shunt calibration and measurement range.
 static constexpr float    kShuntMaxCurrentA = 7.0f;
 static constexpr float    kShuntResistorOhm = 0.005f;
-// 5A plus inrush headroom.
+// Overcurrent alert includes headroom for inrush.
 static constexpr uint32_t kOverCurrentLimitMa = 6500;
+static constexpr uint16_t kMonitoredFaultMask =
+    (1 << INA238_DIAG_SHUNT_OVER_LIMIT) |
+    (1 << INA238_DIAG_SHUNT_UNDER_LIMIT) |
+    (1 << INA238_DIAG_BUS_OVER_LIMIT) |
+    (1 << INA238_DIAG_BUS_UNDER_LIMIT) |
+    (1 << INA238_DIAG_TEMP_OVER_LIMIT) |
+    (1 << INA238_DIAG_POWER_OVER_LIMIT);
 
 bool PowerMonitor::begin() {
     if (!_ina.begin()) {
         return false;
     }
-    _ina.setADCRange(1);
+    // Use the higher-resolution shunt range for this shunt/current configuration.
+    _ina.setADCRange(true);
     _ina.setMaxCurrentShunt(kShuntMaxCurrentA, kShuntResistorOhm);
     _ina.setShuntVoltageConversionTime(INA238_150_us);
     _ina.setAverage(INA238_16_SAMPLES);
     _ina.setOverCurrentLimit(kOverCurrentLimitMa);
-    // Averaged latch.
+    // Configure averaged alerts that remain active until read.
     _ina.setDiagnoseAlertBit(INA238_DIAG_SLOW_ALERT);
     _ina.setDiagnoseAlertBit(INA238_DIAG_ALERT_LATCH);
     return true;
@@ -26,20 +34,14 @@ bool PowerMonitor::begin() {
 void PowerMonitor::update() {
     _busVoltage = _ina.getBusVoltage();
     _current    = _ina.getAmpere();
-    // Read clears latch.
+    // Reading the diagnostic register clears the INA238 alert status.
     const uint16_t diag = _ina.getDiagnoseAlert();
-    const uint16_t faults = diag & (
-        (1 << INA238_DIAG_SHUNT_OVER_LIMIT) |
-        (1 << INA238_DIAG_SHUNT_UNDER_LIMIT)|
-        (1 << INA238_DIAG_BUS_OVER_LIMIT)   |
-        (1 << INA238_DIAG_BUS_UNDER_LIMIT)  |
-        (1 << INA238_DIAG_TEMP_OVER_LIMIT)   |
-        (1 << INA238_DIAG_POWER_OVER_LIMIT)
-    );
-    if (faults != 0) {
-        _alertSticky |= faults;
-        DiagLog::event("safety ina %s", getAlertText());
+    const uint16_t newFaults = diag & kMonitoredFaultMask;
+    if (newFaults == 0) {
+        return;
     }
+    _alertSticky |= newFaults;
+    DiagLog::event("safety ina %s", getAlertText());
 }
 
 float PowerMonitor::getInputVoltage() const { return _busVoltage; }
