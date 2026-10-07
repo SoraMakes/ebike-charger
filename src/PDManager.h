@@ -6,7 +6,7 @@
 
 enum class PDNegotiationState : uint8_t {
     Disconnected,
-    AttachSettle,
+    WaitingForSourceCapabilities,
     Requesting,
     Ready,
 };
@@ -48,7 +48,7 @@ private:
     // Relative rail tolerance for request validation and Ready-state monitoring.
     static constexpr float kVoltageToleranceFraction = 0.10f;
     // PDO-table refresh interval while waiting for attachment updates.
-    static constexpr uint32_t kAttachSettlePollMs = 150;
+    static constexpr uint32_t kSourceCapabilitiesPollMs = 150;
 
     bool requestBestPdo();
     uint8_t findBestFixedPdo() const;
@@ -63,8 +63,11 @@ private:
     bool shouldRenegotiate(uint8_t status);
     void beginRenegotiation();
     void onDisconnected(uint8_t status, uint8_t opMode);
-    void onAttachSettle(uint8_t status);
+    void onWaitingForSourceCapabilities(uint8_t status);
     void onRequesting();
+    bool contractMatchesRequest();
+    void onRequestRejected();
+    void onRequestAccepted();
     void onReady(uint8_t status);
 
     AP33772S _pd;
