@@ -45,7 +45,7 @@ private:
     static constexpr float kMinChargeVoltageV = 8.5f;
     // Upper voltage limit requested from a source.
     static constexpr float kMaxRequestVoltageV = 28.0f;
-    // Relative rail tolerance for request validation and Ready-state monitoring.
+    // Relative rail tolerance for Ready-state contract monitoring.
     static constexpr float kVoltageToleranceFraction = 0.10f;
     // PDO-table refresh interval while waiting for attachment updates.
     static constexpr uint32_t kSourceCapabilitiesPollMs = 150;
@@ -61,6 +61,8 @@ private:
     void handleProtectionTrip(uint8_t status);
     bool contractLossConfirmed();
     bool shouldRenegotiate(uint8_t status);
+    bool refreshPdoTableIfDue();
+    bool detectBestPdoContractChange();
     void beginRenegotiation();
     void onDisconnected(uint8_t status, uint8_t opMode);
     void onWaitingForSourceCapabilities(uint8_t status);
