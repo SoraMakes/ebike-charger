@@ -9,8 +9,7 @@ class PDManager;
 class ThermalManager {
 public:
     /// Initialize fan PWM and the temperature sensor.
-    /// @return false if the temperature sensor cannot be initialized.
-    bool begin(uint8_t fanPin, PDManager &pdManager);
+    void begin(uint8_t fanPin, PDManager &pdManager);
     /// Sample temperature, update fan speed and power limit, and shut down on sensor or temperature faults.
     void update();
     /// Return the most recently accepted temperature reading in Celsius.

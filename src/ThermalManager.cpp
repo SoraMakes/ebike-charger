@@ -18,11 +18,12 @@ static constexpr uint16_t kFanFullDuty = kPwmRange;
 // Fan PWM channel.
 static constexpr uint8_t kFanLedcChannel = 0;
 
-bool ThermalManager::begin(uint8_t fanPin, PDManager &pdManager) {
+void ThermalManager::begin(uint8_t fanPin, PDManager &pdManager) {
     _pdManager = &pdManager;
     const uint32_t configuredFrequency = ledcSetup(kFanLedcChannel, kFanPwmFrequencyHz, 10);
     if (configuredFrequency == 0) {
-        DiagLog::event("safety fan pwm");
+        enterShutdown("fan pwm");
+        return;
     }
     pinMode(fanPin, OUTPUT);
     // pinMode before attach.
@@ -32,11 +33,10 @@ bool ThermalManager::begin(uint8_t fanPin, PDManager &pdManager) {
     _sensorFault = !_sensor.begin(0x76);
     if (_sensorFault) {
         enterShutdown("Temp failed");
-        return false;
+        return;
     }
 
     _outputPowerLimitW = kMaximumThermalPowerW;
-    return true;
 }
 
 void ThermalManager::update() {
