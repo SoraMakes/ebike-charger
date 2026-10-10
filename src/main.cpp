@@ -19,6 +19,9 @@ static constexpr size_t   kSerialTxBufferSizeBytes = 2048;
 static constexpr uint8_t kFanPin  = 12;  // Fan MOSFET driver.
 static constexpr int8_t  kPdIntPin = 13; // Input from RotoPD Pro INT.
 
+// Analog pins.
+static constexpr uint8_t kOutputVoltageSensePin = 33;
+
 static PDManager           pdManager;
 static ThermalManager      thermalManager;
 static PowerMonitor        powerMonitor;
@@ -162,7 +165,7 @@ void setup() {
         delay(2000);
     }
 
-    voltageMonitor.begin(33, pdManager);  // Divider ADC input.
+    voltageMonitor.begin(kOutputVoltageSensePin, pdManager);
     if (!thermalManager.begin(kFanPin, pdManager)) {
         DiagLog::event("safety temp sensor");
     }
