@@ -36,11 +36,11 @@ void PowerMonitor::update() {
     _current    = _ina.getAmpere();
     // Reading the diagnostic register clears the INA238 alert status.
     const uint16_t diag = _ina.getDiagnoseAlert();
-    const uint16_t newFaults = diag & kMonitoredFaultMask;
-    if (newFaults == 0) {
+    const uint16_t newlyLatchedFaults = diag & kMonitoredFaultMask & ~_alertSticky;
+    if (newlyLatchedFaults == 0) {
         return;
     }
-    _alertSticky |= newFaults;
+    _alertSticky |= newlyLatchedFaults;
     DiagLog::event("safety ina %s", getAlertText());
 }
 
