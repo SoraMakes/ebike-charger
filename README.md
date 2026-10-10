@@ -1,9 +1,9 @@
 # USB-PD Charger
 
-Firmware for a TTGO T-Display (ESP32) based USB-PD charger. It negotiates the
-highest available USB-PD voltage, controls the regulator's output current
-through an MCP4018 digipot, limits power according to temperature, and shows
-metrics on the onboard ST7789 display.
+Firmware for a TTGO T-Display (ESP32) based USB-PD charger. It selects the
+highest eligible fixed PDO within its configured operating range, controls the
+regulator's output current through an MCP4018 digipot, limits power according to
+temperature, and shows metrics on the onboard display.
 
 ## Build and upload
 
@@ -22,7 +22,7 @@ The serial monitor uses **115200 baud**. The required libraries are declared in
 
 | Function | GPIO | Notes |
 |---|---|---|
-| I2C SDA | 21 | Shared bus: AP33772S, AHT10, MCP4018, INA219 |
+| I2C SDA | 21 | Shared bus: AP33772S, BMP280, MCP4018, INA238 |
 | I2C SCL | 22 | Shared bus |
 | Voltage divider (ADC) | 33 | ADC1 input; measures charger output voltage |
 | PD INT | 13 | PD trigger board (RotoPD Pro) interrupt output |
