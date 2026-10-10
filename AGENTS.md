@@ -38,5 +38,3 @@ Settings live in `platformio.ini`.
 - Keep managers decoupled; `main.cpp` wires them. No cross-includes between managers.
 - Latch permanent faults via `PDManager::shutdown()` / `DiagLog::event()`, never
   silently continue.
-- Comments are for a future educated reader: short, precise, WHAT not HOW.
-  No task or progress references.
