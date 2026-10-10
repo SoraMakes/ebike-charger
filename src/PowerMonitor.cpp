@@ -24,6 +24,7 @@ bool PowerMonitor::begin() {
     _ina.setADCRange(true);
     _ina.setMaxCurrentShunt(kShuntMaxCurrentA, kShuntResistorOhm);
     _ina.setShuntVoltageConversionTime(INA238_150_us);
+    _ina.setTemperatureConversionTime(INA238_150_us);
     _ina.setAverage(INA238_16_SAMPLES);
     _ina.setOverCurrentLimit(kOverCurrentLimitMa);
     // Configure averaged alerts that remain active until read.

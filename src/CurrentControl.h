@@ -19,7 +19,7 @@ public:
     /// Current limit; floor step 0 (~0.14 A), never 0.
     float getCurrentLimitA() const;
 
-    /// Setpoint at target.
+    /// True when the current setpoint has reached its target.
     bool isRampUpFinished() const;
 
     /// Last digipot step written.

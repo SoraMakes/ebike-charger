@@ -5,11 +5,7 @@
 static constexpr uint8_t kMCP4018Address = 0x2F; // hardware-fixed
 
 static constexpr uint8_t kMaxStep = 127;
-static constexpr uint32_t kIncreaseIntervalMs = 250;
-// Steps reserved for the slow, one-at-a-time approach to the target.
-static constexpr int16_t kFinalRampSteps = 4;
-// Current-limit digipot step divided by this value sets coarse ramp steps per interval.
-static constexpr int16_t kRampUpDivisor = 8;
+static constexpr uint32_t kRampStepIntervalMs = 50;
 
 // Output-current calibration.
 static constexpr float kCurrentAtStepZeroA   = 0.14f;
@@ -48,30 +44,12 @@ void CurrentControl::update(float limitWatts, bool noLoad) {
         return;
     }
 
-    const int16_t acceleratedTarget = max(
-        static_cast<int16_t>(0),
-        static_cast<int16_t>(currentLimitDigipotStep - kFinalRampSteps)
-    );
-
     if (_outputDigipotStep > currentLimitDigipotStep) {
         _outputDigipotStep = currentLimitDigipotStep;
     } else if (_outputDigipotStep < currentLimitDigipotStep) {
-        if (now - _lastStepChangeAt >= kIncreaseIntervalMs) {
+        if (now - _lastStepChangeAt >= kRampStepIntervalMs) {
             _lastStepChangeAt = now;
-
-            if (_outputDigipotStep < acceleratedTarget) {
-                const int16_t stepsPerIncrease = max(
-                    static_cast<int16_t>(1),
-                    static_cast<int16_t>(currentLimitDigipotStep / kRampUpDivisor)
-                );
-                _outputDigipotStep = min(
-                    static_cast<int16_t>(_outputDigipotStep + stepsPerIncrease),
-                    acceleratedTarget
-                );
-            } else {
-                // Final steps: one step per timer interval.
-                ++_outputDigipotStep;
-            }
+            ++_outputDigipotStep;
         }
     }
 
