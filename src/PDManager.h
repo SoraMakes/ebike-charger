@@ -95,28 +95,29 @@ private:
     int8_t _intPin = -1;
 
     PDNegotiationState _state = PDNegotiationState::Disconnected;
-    uint32_t _stateEnteredAt = 0;
-    uint32_t _lastStatusPollMs = 0;
-    uint32_t _lastPdoPollMs = 0;
-    uint32_t _contractLostSinceMs = 0;
-    uint32_t _lastRecoveryMs = 0;
+    uint32_t _stateEnteredAt       = 0;
+    uint32_t _lastStatusPollMs     = 0;
+    uint32_t _lastPdoPollMs        = 0;
+    uint32_t _contractLostSinceMs  = 0;
+    uint32_t _lastRecoveryMs       = 0;
     uint32_t _nextRequestAllowedMs = 0;
 
     float   _voltage = 0.0f;
     float   _current = 0.0f;
 
-    bool _justAttached  = false;
+    bool _justAttached    = false;
     bool _contractChanged = false;
 
-    bool _shutdownLatched = false;
-    char _shutdownReason[17] = "";
-    bool _configured      = false;
+    bool _shutdownLatched     = false;
+    char _shutdownReason[17]  = "";
+    bool _configured          = false;
+    bool _configFailureLogged = false;
 
     // OPMODE bits 0-1 indicate a legacy CC or PD source.
     static constexpr uint8_t kOpModeSourceMask = 0x03;
     uint8_t _statusSticky = 0;
-    uint8_t _lastStatus = 0;
-    uint8_t _lastOpMode = 0xFF;
+    uint8_t _lastStatus   = 0;
+    uint8_t _lastOpMode   = 0xFF;
     // PD-input volts.
-    float _inputVoltageV = 0.0f;
+    float _inputVoltageV  = 0.0f;
 };

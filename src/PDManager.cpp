@@ -36,7 +36,14 @@ void PDManager::applyStartupConfig() {
     }
     // False UVP on RotoPD Pro.
     _pd.clearConfig(AP33772_CONFIG::UVP_EN);
-    _pd.setInterruptRegisterMask(STARTED_MSK | READY_MSK | NEWPDO_MSK | kFaultMask);
+    if (!_pd.setInterruptRegisterMask(STARTED_MSK | READY_MSK | NEWPDO_MSK | kFaultMask)) {
+        if (!_configFailureLogged) {
+            DiagLog::event("PD mask write failed");
+            _configFailureLogged = true;
+        }
+        return;
+    }
+    _configFailureLogged = false;
     _configured = true;
 }
 
@@ -87,6 +94,9 @@ void PDManager::update() {
 
     uint8_t opMode = 0;
     const uint8_t status = pollInputs(opMode);
+    if (_state != PDNegotiationState::Disconnected && !_configured) {
+        applyStartupConfig();
+    }
     handleChipRestart(status);
     handleProtectionTrip(status);
 
