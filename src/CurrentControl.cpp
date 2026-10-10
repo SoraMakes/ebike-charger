@@ -68,7 +68,8 @@ float CurrentControl::getCurrentLimitA() const {
 }
 
 bool CurrentControl::isRampUpFinished() const {
-    return _outputDigipotStep >= _currentLimitDigipotStep;
+    // Wait for the digipot to acknowledge the requested target step.
+    return _outputDigipotStep >= _currentLimitDigipotStep && _lastDigipotStep == _outputDigipotStep;
 }
 
 void CurrentControl::writeDigipot(uint8_t step) {
