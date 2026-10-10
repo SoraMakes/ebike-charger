@@ -1,6 +1,8 @@
 #include "VoltageMonitor.h"
 #include "PDManager.h"
 
+#include <algorithm>
+
 static constexpr float kShutdownVoltageV = 42.5f;
 
 // 12-bit ADC via 219k/4.86k divider, ADC_0db (~50.67V full scale).
@@ -19,36 +21,35 @@ void VoltageMonitor::begin(uint8_t adcPin, PDManager &pdManager) {
 }
 
 void VoltageMonitor::update() {
-    // Outlier rejection.
-    int readings[3];
-    readings[0] = analogRead(_adcPin);
-    readings[1] = analogRead(_adcPin);
-    readings[2] = analogRead(_adcPin);
-    if (readings[0] > readings[1]) { int t = readings[0]; readings[0] = readings[1]; readings[1] = t; }
-    if (readings[1] > readings[2]) { int t = readings[1]; readings[1] = readings[2]; readings[2] = t; }
-    if (readings[0] > readings[1]) { int t = readings[0]; readings[0] = readings[1]; readings[1] = t; }
-    _rawReading = readings[1];
+    const int rawReading = readMedianAdc();
 
-    const float dividerVoltageV = static_cast<float>(_rawReading) * (kAdcVoltageFullScaleV / kAdcResolution);
+    const float measuredVoltageV = static_cast<float>(rawReading) * (kAdcVoltageFullScaleV / kAdcResolution);
 
-    // Clamp invalid near-zero fit.
-    const float calibratedVoltageV = (dividerVoltageV < kCalibrationValidFromV)
-        ? 0.0f
-        : dividerVoltageV * kVoltageCalibrationGain + kVoltageCalibrationOffset;
+    // Correct the measured voltage using the calibration fit.
+    const float calibratedVoltageV = measuredVoltageV * kVoltageCalibrationGain + kVoltageCalibrationOffset;
+    // Reject measurements below the fit's valid range.
+    const float clampedVoltageV = measuredVoltageV < kCalibrationValidFromV ? 0.0f : calibratedVoltageV;
 
-    // Low-voltage reset.
-    if (calibratedVoltageV < kEmaResetVoltageV || _voltageV < kEmaResetVoltageV) {
-        _voltageV = calibratedVoltageV;
+    // Bypass smoothing near the low-voltage threshold so startup and dropout respond promptly.
+    const bool resetEma = clampedVoltageV < kEmaResetVoltageV || _voltageV < kEmaResetVoltageV;
+    if (resetEma) {
+        _voltageV = clampedVoltageV;
     } else {
-        _voltageV += kEmaAlpha * (calibratedVoltageV - _voltageV);
+        _voltageV += kEmaAlpha * (clampedVoltageV - _voltageV);
     }
 
-    // Sustained-overvoltage shutdown.
+    // Shut down when consecutive readings confirm overvoltage.
     const bool overVoltage = _voltageV >= kShutdownVoltageV;
     _overvoltageCount = overVoltage ? _overvoltageCount + 1 : 0;
     if (_overvoltageCount >= kOvervoltageRequiredSamples) {
         _pdManager->shutdown("overvoltage");
     }
+}
+
+int VoltageMonitor::readMedianAdc() const {
+    int readings[3] = {analogRead(_adcPin), analogRead(_adcPin), analogRead(_adcPin)};
+    std::sort(readings, readings + 3);
+    return readings[1];
 }
 
 float VoltageMonitor::getVoltage() const {

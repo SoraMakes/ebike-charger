@@ -176,11 +176,13 @@ class AP33772S
 {
 public:
   AP33772S(TwoWire &wire = Wire);
+  /// Check for the AP33772S and load its advertised source PDO profiles.
+  /// @return false if the device probe or PDO read fails.
   bool begin();
+  /// Check for the AP33772S on `wire` and load its advertised source PDO profiles.
+  /// @return false if the device probe or PDO read fails.
   bool begin(TwoWire &wire);
   void reset();
-  bool hardReset();
-  bool readRawByte(uint8_t cmd, uint8_t &outVar);
   void displayPDOInfo(int pdoIndex);
   void displayProfiles();
   void mapPPSAVSInfo();
@@ -193,6 +195,9 @@ public:
   
   // Mask/Config functions
   void setMask(AP33772_MASK flag);
+  /// Write the complete mask register to control INT notifications for status
+  /// and fault events such as startup, PDO changes, and protection trips.
+  /// @return false if the I2C write fails.
   bool setInterruptRegisterMask(uint8_t mask);
   void clearMask(AP33772_MASK flag);
   void setConfig(AP33772_CONFIG flag);
@@ -200,20 +205,27 @@ public:
   byte readMask();
 
   // Raw status & opmode
+  /// Read and clear latched status flags; returns 0 on an I2C error.
   uint8_t readStatus();
+  /// Read the controller operating mode; returns 0 on an I2C error.
   uint8_t readOpMode();
+  /// Read the latest PD message result; returns 0 on an I2C error.
   uint8_t readMsgResult();
 
   // PDO table access; all indices are 1-based (1..13) as in USB-PD RDOs
-  void refreshPdoTable();
+  /// Refresh the source PDO table, retaining the previous table on read failure.
+  /// @return false if the I2C read fails.
+  bool refreshPdoTable();
+  /// Request a detected fixed PDO at its advertised current limit.
+  /// @return false if the PDO is invalid or the I2C write fails.
   bool requestFixedPDO(uint8_t pdoIndex);
-  /// Writes PD_REQMSG directly without checking PDO validity. Firing a request
-  /// even when no capabilities are cached may prompt the chip to issue
-  /// Get_Source_Cap to the source to obtain them. Used by the repeated
-  /// re-request test.
-  bool requestPdoRaw(uint8_t pdoIndex, uint8_t currentSel);
+  /// Check whether source profile index 1–13 is a detected fixed PDO.
   bool isFixedPdoAt(int pdoIndex) const;
+  /// Return the fixed PDO voltage in volts, or 0 if it is invalid or non-fixed.
   float getPdoVoltageV(int pdoIndex) const;
+  /// Return this PDO's pessimistic CURRENT_MAX lower bound in amps: the IC
+  /// reports 250 mA buckets (e.g. 1.50–1.74 A becomes 1.50 A).
+  /// The lowest bucket (0–1.24 A) maps to 0 A; returns 0 if unusable.
   float getPdoMaxCurrentA(int pdoIndex) const;
 
   // Monitor functions

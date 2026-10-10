@@ -19,7 +19,7 @@ public:
     /// Current limit; floor step 0 (~0.14 A), never 0.
     float getCurrentLimitA() const;
 
-    /// Setpoint at target.
+    /// True when the current setpoint has reached its target.
     bool isRampUpFinished() const;
 
     /// Last digipot step written.
@@ -28,9 +28,9 @@ public:
 private:
     TwoWire *_wire         = nullptr;
     VoltageMonitor *_voltageMonitor = nullptr;
-    int16_t  _powerLevel   = 0;
-    int16_t  _targetLevel  = 0;
-    int16_t  _lastDigipotStep = -1;
+    int16_t  _outputDigipotStep = 0;  // Current output setpoint in digipot steps.
+    int16_t  _currentLimitDigipotStep = 0;
+    int16_t  _lastDigipotStep = -1;  // Last step acknowledged on I2C; -1 forces the initial write.
     uint32_t _lastStepChangeAt = 0;
 
     void    writeDigipot(uint8_t step);

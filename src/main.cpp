@@ -1,36 +1,38 @@
 #include <Arduino.h>
 #include <Wire.h>
-#include <math.h>
 #include "PDManager.h"
 #include "ThermalManager.h"
 #include "PowerMonitor.h"
 #include "CurrentControl.h"
 #include "VoltageMonitor.h"
 #include "DisplayManager.h"
-#include "EfficiencyEstimator.h"
+#include "InputPowerUtilizationController.h"
 #include "DiagLog.h"
 
 // TTGO T-Display I2C pins.
 static constexpr int      I2C_SDA_PIN              = 21;
 static constexpr int      I2C_SCL_PIN              = 22;
-static constexpr float    kMinChargeVoltage        = 8.5f;  // Charger enable floor.
+static constexpr size_t   kSerialTxBufferSizeBytes = 2048;
 
 // Digital pins.
 static constexpr uint8_t kFanPin  = 12;  // Fan MOSFET driver.
-static constexpr int8_t  kPdIntPin = 13; // RotoPD Pro INT output.
+static constexpr int8_t  kPdIntPin = 13; // Input from RotoPD Pro INT.
 
-static PDManager      pdManager;
-static ThermalManager thermalManager;
-static PowerMonitor   powerMonitor;
-static CurrentControl currentControl;
-static VoltageMonitor voltageMonitor;
-static DisplayManager displayManager;
-static EfficiencyEstimator efficiencyEstimator;
+// Analog pins.
+static constexpr uint8_t kOutputVoltageSensePin = 33;
 
-static constexpr float kElectronicsPowerW          = 2.0f;  // Electronics overhead.
-static constexpr float kNoLoadInputW               = 5.0f;  // Absent-load floor.
+static PDManager           pdManager;
+static ThermalManager      thermalManager;
+static PowerMonitor        powerMonitor;
+static CurrentControl      currentControl;
+static VoltageMonitor      voltageMonitor;
+static DisplayManager      displayManager;
+static InputPowerUtilizationController inputPowerUtilizationController;
 
-// Rollover-safe interval task.
+static constexpr float kElectronicsPowerW          = 1.0f;  // Electronics overhead. Measured: 0.7W idle (.55 fan), 1.3W max fan
+static constexpr float kNoLoadInputW               = 5.0f;  // Treat PD-input power below this threshold as no load.
+static constexpr uint32_t kPowerFeedbackIntervalMs = 25;  // Half of kRampStepIntervalMs in CurrentControl.cpp.
+
 class PeriodicTask {
 public:
     PeriodicTask(uint32_t intervalMs, void (*action)()) : _intervalMs(intervalMs), _action(action) {}
@@ -55,11 +57,11 @@ static float calculateOutputPowerLimit(float inputPowerLimitW) {
     }
 
     const float regulatorInputPowerW = inputPowerLimitW - kElectronicsPowerW;
-    return regulatorInputPowerW * efficiencyEstimator.getEfficiency();
+    return regulatorInputPowerW * inputPowerUtilizationController.getOutputPowerFactor();
 }
 
 static void updateDisplay() {
-    displayManager.update(pdManager, thermalManager, currentControl, voltageMonitor, powerMonitor, efficiencyEstimator);
+    displayManager.update(pdManager, thermalManager, currentControl, voltageMonitor, powerMonitor);
 }
 
 static void updateThermal() {
@@ -71,7 +73,7 @@ static void updatePd() {
     pdManager.setMeasuredInputVoltage(powerMonitor.getInputVoltage());
     pdManager.update();
 
-    if (pdManager.voltageJumped()) {
+    if (pdManager.contractChanged()) {
         currentControl.minimumCurrent();
     }
 
@@ -86,22 +88,32 @@ static void updateVoltage() {
 
 static void updatePowerMonitor() {
     powerMonitor.update();
+    if (powerMonitor.hasSensorFault()) {
+        pdManager.shutdown("ina read");
+    }
 }
 
-// PD plus thermal status.
+
 static void logSystemDiagnostics() {
     static const char *kStateNames[] = {"DISC", "SETTLE", "REQ", "READY"};
     const char *inaAlert = powerMonitor.getAlertText();
+    const char *pdFault = pdManager.getProtectionFaultText();
     const bool hasInaAlert = (inaAlert != nullptr && inaAlert[0] != '\0');
     Serial.printf("[PD] st=%s contract=%.1fV/%.2fA opmode=0x%02X msgrlt=%u sticky=0x%02X%s%s%s%s ina=%.2fV/%.2fA out=%.2fV pot=%d temp=%.1fC thlim=%.1fW\n",
         kStateNames[static_cast<uint8_t>(pdManager.getState())],
-        pdManager.getVoltage(), pdManager.getCurrent(),
-        pdManager.getOpMode(), pdManager.getMsgResult(), pdManager.getStickyStatus(),
-        pdManager.hasChipFault() ? " FAULT:" : "", pdManager.getFaultText(),
+        pdManager.getVoltage(), 
+        pdManager.getCurrent(),
+        static_cast<unsigned>(pdManager.getOpMode()),
+        static_cast<unsigned>(pdManager.getMsgResult()),
+        static_cast<unsigned>(pdManager.getStickyStatus()),
+        pdManager.hasProtectionFault() ? " FAULT:" : "", pdFault,
         hasInaAlert ? " INA:" : "", hasInaAlert ? inaAlert : "",
-        powerMonitor.getInputVoltage(), powerMonitor.getInputCurrent(),
-        voltageMonitor.getVoltage(), currentControl.getDigipotStep(),
-        thermalManager.getTemperatureC(), thermalManager.getOutputPowerLimitW());
+        powerMonitor.getInputVoltage(), 
+        powerMonitor.getInputCurrent(),
+        voltageMonitor.getVoltage(),
+        currentControl.getDigipotStep(),
+        thermalManager.getTemperatureC(),
+        thermalManager.getOutputPowerLimitW());
 }
 
 static void dumpDiagnosticHistory() {
@@ -109,75 +121,65 @@ static void dumpDiagnosticHistory() {
 }
 
 static void updateCurrentControl() {
-    // INA volts budget; contract current target.
     const float inputVoltageV = powerMonitor.getInputVoltage();
-    const float pdPowerLimit = pdManager.getCurrent() * inputVoltageV;
-    const float pdOutputPowerLimit = calculateOutputPowerLimit(pdPowerLimit);
-    const float thermalOutputPowerLimit = thermalManager.getOutputPowerLimitW();
-    const float outputPowerLimit = min(pdOutputPowerLimit, thermalOutputPowerLimit);
+    const float allowedInputPowerW = pdManager.getCurrent() * inputVoltageV;
     const float actualInputPowerW = inputVoltageV * powerMonitor.getInputCurrent();
     const bool noLoad = actualInputPowerW < kNoLoadInputW;
+
+    // Limits
+    const float pdOutputPowerLimit = calculateOutputPowerLimit(allowedInputPowerW);
+    const float thermalOutputPowerLimit = thermalManager.getOutputPowerLimitW();
+    const float outputPowerLimit = min(pdOutputPowerLimit, thermalOutputPowerLimit);
 
     currentControl.update(outputPowerLimit, noLoad);
 }
 
-static void updateEfficiency() {
-    // INA volts/current; contract current is allowed.
+static void updateInputPowerUtilization() {
     const float inputVoltageV = powerMonitor.getInputVoltage();
     const float allowedInputPowerW = pdManager.getCurrent() * inputVoltageV;
-    const float actualInputPowerW  = inputVoltageV * powerMonitor.getInputCurrent();
-
+    const float actualInputPowerW = inputVoltageV * powerMonitor.getInputCurrent();
     const bool noLoad = actualInputPowerW < kNoLoadInputW;
 
-    efficiencyEstimator.update(allowedInputPowerW - kElectronicsPowerW,
-                               actualInputPowerW  - kElectronicsPowerW,
-                               currentControl.isRampUpFinished(),
-                               noLoad);
+    inputPowerUtilizationController.update(allowedInputPowerW - kElectronicsPowerW,
+                                           actualInputPowerW - kElectronicsPowerW,
+                                           currentControl.isRampUpFinished(),
+                                           noLoad);
 }
 
 static PeriodicTask displayTask(100, updateDisplay);
 static PeriodicTask thermalUpdateTask(1000, updateThermal);
-// Sub-second debounce/timeout tick.
 static PeriodicTask pdUpdateTask(50, updatePd);
 static PeriodicTask voltageUpdateTask(100, updateVoltage);
-static PeriodicTask powerMonitorUpdateTask(50, updatePowerMonitor);
-static PeriodicTask currentUpdateTask(50, updateCurrentControl);
-static PeriodicTask efficiencyUpdateTask(50, updateEfficiency);
+static PeriodicTask powerMonitorUpdateTask(kPowerFeedbackIntervalMs, updatePowerMonitor);
+static PeriodicTask currentUpdateTask(kPowerFeedbackIntervalMs, updateCurrentControl);
+static PeriodicTask inputPowerUtilizationTask(kPowerFeedbackIntervalMs, updateInputPowerUtilization);
 static PeriodicTask pdDiagTask(2000, logSystemDiagnostics);
 static PeriodicTask diagHistoryTask(10000, dumpDiagnosticHistory);
 
 void setup() {
+    Serial.setTxBufferSize(kSerialTxBufferSizeBytes);
     Serial.begin(115200);
-
-    Serial.println("\n\n=== USB PD Charger ===");
 
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
-    // Digipot powers mid-scale.
     currentControl.begin(Wire, voltageMonitor);
-
     displayManager.begin();
-    efficiencyEstimator.begin();
+    inputPowerUtilizationController.begin();
 
-    // Shutdown targets before sensors.
     while (!pdManager.begin(Wire, kPdIntPin)) {
-        displayManager.showMessage("PD controller\nnot found!");
+        displayManager.showMessage({"PD controller", "not found!"});
         delay(2000);
     }
 
-    voltageMonitor.begin(33, pdManager);  // Divider ADC input.
-    if (!thermalManager.begin(Wire, kFanPin, pdManager)) {
-        DiagLog::event("safety temp sensor");
-    }
+    voltageMonitor.begin(kOutputVoltageSensePin, pdManager);
+    thermalManager.begin(kFanPin, pdManager);
 
     if (!powerMonitor.begin()) {
-        // No rail truth without INA.
         pdManager.shutdown("ina missing");
     }
 }
 
 void loop() {
-    displayTask.tick();
     thermalUpdateTask.tick();
 
     powerMonitorUpdateTask.tick();
@@ -187,23 +189,7 @@ void loop() {
     pdDiagTask.tick();
     diagHistoryTask.tick();
 
-    if (pdManager.isShutdownLatched()) {
-        currentControl.minimumCurrent();
-        return;
-    }
-
-    if (!pdManager.isReady()) {
-        currentControl.minimumCurrent();
-        return;
-    }
-
-    const float voltage = pdManager.getVoltage();
-
-    if (voltage < kMinChargeVoltage) {
-        currentControl.minimumCurrent();
-        return;
-    }
-
+    inputPowerUtilizationTask.tick();
     currentUpdateTask.tick();
-    efficiencyUpdateTask.tick();
+    displayTask.tick();
 }

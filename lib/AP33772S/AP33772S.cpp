@@ -41,9 +41,6 @@ AP33772S::AP33772S(TwoWire &wire)
     _i2cPort = &wire;
 }
 
-/**
- * @brief Check if power supply is good and fetch the PDO profile
- */
 bool AP33772S::begin(TwoWire &wire)
 {
     _i2cPort = &wire;
@@ -59,21 +56,25 @@ bool AP33772S::begin()
     // Insufficient delay after I2C init before the capability request has
     // caused "no PDOs read" symptoms on other AP33772S boards. Give the chip
     // time to settle before reading the PDO table.
+    // This blocks startup configuration; attached sources may negotiate before
+    // CONFIG/MASK/SYSTEM are applied within the ~100 ms STARTED window.
     delay(1000);
-    refreshPdoTable();
-    return true;
+    return refreshPdoTable();
 }
 
-void AP33772S::refreshPdoTable()
+bool AP33772S::refreshPdoTable()
 {
+    if (!i2c_read(AP33772S_ADDRESS, CMD_SRCPDO, MAX_PDO_ENTRIES * 2)) {
+        return false;
+    }
     memset(SRC_SPRandEPRpdoArray, 0, sizeof(SRC_SPRandEPRpdoArray));
-    i2c_read(AP33772S_ADDRESS, CMD_SRCPDO, MAX_PDO_ENTRIES * 2);
     for (int i = 0; i < MAX_PDO_ENTRIES * 2; i += 2) {
         int pdoIndex = (i / 2);
         SRC_SPRandEPRpdoArray[pdoIndex].byte0 = readBuf[i];
         SRC_SPRandEPRpdoArray[pdoIndex].byte1 = readBuf[i + 1];
     }
     mapPPSAVSInfo();
+    return true;
 }
 
 bool AP33772S::setInterruptRegisterMask(uint8_t mask)
@@ -113,16 +114,6 @@ bool AP33772S::requestFixedPDO(uint8_t pdoIndex)
     RDO_DATA_T rdo{};
     rdo.REQMSG_Fields.PDO_INDEX   = pdoIndex;
     rdo.REQMSG_Fields.CURRENT_SEL = SRC_SPRandEPRpdoArray[pdoIndex - 1].fixed.current_max;
-    writeBuf[0] = rdo.byte0;
-    writeBuf[1] = rdo.byte1;
-    return i2c_write(AP33772S_ADDRESS, CMD_PD_REQMSG, 2);
-}
-
-bool AP33772S::requestPdoRaw(uint8_t pdoIndex, uint8_t currentSel)
-{
-    RDO_DATA_T rdo{};
-    rdo.REQMSG_Fields.PDO_INDEX   = pdoIndex;
-    rdo.REQMSG_Fields.CURRENT_SEL = currentSel;
     writeBuf[0] = rdo.byte0;
     writeBuf[1] = rdo.byte1;
     return i2c_write(AP33772S_ADDRESS, CMD_PD_REQMSG, 2);
@@ -188,30 +179,6 @@ void AP33772S::displayProfiles()
  }
 
 /**
- * @brief Host-initiated PD Hard Reset via PD_CMDMSG.HRST (bit 0).
- *        Instructs the sink controller to drop VBUS and re-attach, forcing a
- *        fresh PD negotiation. Used to recover from a stuck legacy (non-PD)
- *        latching state. This is a WO register - only ever write it.
- */
-bool AP33772S::hardReset()
-{
-    writeBuf[0] = 0x01; // bit0 = HRST
-    return i2c_write(AP33772S_ADDRESS, CMD_PD_CMDMSG, 1);
-}
-
-/**
- * @brief Read a raw 1-byte register. Returns false on I2C error (via readBuf).
- */
-bool AP33772S::readRawByte(uint8_t cmd, uint8_t &outVar)
-{
-    if (!i2c_read(AP33772S_ADDRESS, cmd, 1)) {
-        return false;
-    }
-    outVar = readBuf[0];
-    return true;
-}
-
-/**
  * @brief Decode PDO information from SRC_SPRandEPR_PDO_Fields
  * @param pdoIndex feed from loop
  */
@@ -256,6 +223,8 @@ void AP33772S::displayPDOInfo(int pdoIndex) {
  */
 void AP33772S::mapPPSAVSInfo()
 {
+  _indexPPSUser = -1;
+  _indexAVSUser = -1;
   for(int i = 1; i<=13; i++)
   {
     if(i < 8 && SRC_SPRandEPRpdoArray[i-1].pps.type == 1)
@@ -897,7 +866,7 @@ byte AP33772S::readMask()
 
 /*************LOW LEVEL HELPER FUNCTIONS***************/
 
-//** Need basic I2C function here */
+/** @brief Read register bytes; return false on an I2C error or short read. */
 bool AP33772S::i2c_read(byte slvAddr, byte cmdAddr, byte len)
 {
     // clear readBuffer
@@ -929,6 +898,7 @@ bool AP33772S::i2c_read(byte slvAddr, byte cmdAddr, byte len)
     return true;
 }
 
+/** @brief Write register bytes; return false on an I2C error. */
 bool AP33772S::i2c_write(byte slvAddr, byte cmdAddr, byte len)
 {
     _i2cPort->beginTransmission(slvAddr); // transmit to device SLAVE_ADDRESS
