@@ -88,6 +88,9 @@ static void updateVoltage() {
 
 static void updatePowerMonitor() {
     powerMonitor.update();
+    if (powerMonitor.hasSensorFault()) {
+        pdManager.shutdown("ina read");
+    }
 }
 
 

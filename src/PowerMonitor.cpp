@@ -16,7 +16,8 @@ static constexpr uint16_t kMonitoredFaultMask =
     (1 << INA238_DIAG_POWER_OVER_LIMIT);
 
 bool PowerMonitor::begin() {
-    if (!_ina.begin()) {
+    if (!_ina.begin() || _ina.getLastError() != 0) {
+        _sensorFault = true;
         return false;
     }
     // Use the higher-resolution shunt range for this shunt/current configuration.
@@ -32,16 +33,40 @@ bool PowerMonitor::begin() {
 }
 
 void PowerMonitor::update() {
+    if (_sensorFault) {
+        return;
+    }
+
     _busVoltage = _ina.getBusVoltage();
+    if (!checkReadError("voltage")) {
+        return;
+    }
     _current    = _ina.getAmpere();
+    if (!checkReadError("current")) {
+        return;
+    }
     // Reading the diagnostic register clears the INA238 alert status.
     const uint16_t diag = _ina.getDiagnoseAlert();
+    if (!checkReadError("diagnostics")) {
+        return;
+    }
     const uint16_t newlyLatchedFaults = diag & kMonitoredFaultMask & ~_alertSticky;
     if (newlyLatchedFaults == 0) {
         return;
     }
     _alertSticky |= newlyLatchedFaults;
     DiagLog::event("safety ina %s", getAlertText());
+}
+
+bool PowerMonitor::checkReadError(const char *measurement) {
+    const int error = _ina.getLastError();
+    if (error == 0) {
+        return true;
+    }
+
+    _sensorFault = true;
+    DiagLog::event("ina %s read error %d", measurement, error);
+    return false;
 }
 
 float PowerMonitor::getInputVoltage() const { return _busVoltage; }
