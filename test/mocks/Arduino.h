@@ -1,0 +1,48 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <cstdarg>
+#include <cstdio>
+#include <string>
+
+uint32_t millis();
+
+class FakeSerial {
+public:
+    int printf(const char *format, ...) {
+        char text[128];
+        va_list args;
+        va_start(args, format);
+        const int length = std::vsnprintf(text, sizeof(text), format, args);
+        va_end(args);
+        if (length > 0) {
+            const size_t written = static_cast<size_t>(length) < sizeof(text)
+                ? static_cast<size_t>(length)
+                : sizeof(text) - 1;
+            output.append(text, written);
+        }
+        return length;
+    }
+
+    void clear() { output.clear(); }
+
+    std::string output;
+};
+
+extern FakeSerial Serial;
+
+template <typename T>
+constexpr T min(T left, T right) {
+    return left < right ? left : right;
+}
+
+template <typename T>
+constexpr T max(T left, T right) {
+    return left > right ? left : right;
+}
+
+template <typename T>
+constexpr T constrain(T value, T low, T high) {
+    return min(max(value, low), high);
+}
