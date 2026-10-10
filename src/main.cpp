@@ -101,13 +101,19 @@ static void logSystemDiagnostics() {
     const bool hasInaAlert = (inaAlert != nullptr && inaAlert[0] != '\0');
     Serial.printf("[PD] st=%s contract=%.1fV/%.2fA opmode=0x%02X msgrlt=%u sticky=0x%02X%s%s%s%s ina=%.2fV/%.2fA out=%.2fV pot=%d temp=%.1fC thlim=%.1fW\n",
         kStateNames[static_cast<uint8_t>(pdManager.getState())],
-        pdManager.getVoltage(), pdManager.getCurrent(),
-        pdManager.getOpMode(), pdManager.getMsgResult(), pdManager.getStickyStatus(),
+        pdManager.getVoltage(), 
+        pdManager.getCurrent(),
+        static_cast<unsigned>(pdManager.getOpMode()),
+        static_cast<unsigned>(pdManager.getMsgResult()),
+        static_cast<unsigned>(pdManager.getStickyStatus()),
         pdManager.hasProtectionFault() ? " FAULT:" : "", pdFault,
         hasInaAlert ? " INA:" : "", hasInaAlert ? inaAlert : "",
-        powerMonitor.getInputVoltage(), powerMonitor.getInputCurrent(),
-        voltageMonitor.getVoltage(), currentControl.getDigipotStep(),
-        thermalManager.getTemperatureC(), thermalManager.getOutputPowerLimitW());
+        powerMonitor.getInputVoltage(), 
+        powerMonitor.getInputCurrent(),
+        voltageMonitor.getVoltage(),
+        currentControl.getDigipotStep(),
+        thermalManager.getTemperatureC(),
+        thermalManager.getOutputPowerLimitW());
 }
 
 static void dumpDiagnosticHistory() {

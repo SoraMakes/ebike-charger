@@ -9,12 +9,12 @@ void InputPowerUtilizationController::begin() {
 void InputPowerUtilizationController::update(float availableRegulatorInputW,
                                              float measuredRegulatorInputW,
                                              bool rampUpFinished, bool noLoad) {
-    if (!isfinite(availableRegulatorInputW) || availableRegulatorInputW <= 0.0f) {
+    if (noLoad) {
+        _outputPowerFactor = kInitialOutputPowerFactor;
         return;
     }
 
-    if (noLoad) {
-        _outputPowerFactor = kInitialOutputPowerFactor;
+    if (!isfinite(availableRegulatorInputW) || availableRegulatorInputW <= 0.0f) {
         return;
     }
 
