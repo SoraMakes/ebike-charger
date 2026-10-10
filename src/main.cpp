@@ -169,9 +169,7 @@ void setup() {
     }
 
     voltageMonitor.begin(kOutputVoltageSensePin, pdManager);
-    if (!thermalManager.begin(kFanPin, pdManager)) {
-        DiagLog::event("safety temp sensor");
-    }
+    thermalManager.begin(kFanPin, pdManager);
 
     if (!powerMonitor.begin()) {
         pdManager.shutdown("ina missing");
