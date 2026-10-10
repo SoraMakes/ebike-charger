@@ -4,7 +4,6 @@
 #include "CurrentControl.h"
 #include "VoltageMonitor.h"
 #include "PowerMonitor.h"
-#include "EfficiencyEstimator.h"
 
 void DisplayManager::begin() {
     _tft.init();
@@ -26,7 +25,7 @@ void DisplayManager::showMessage(std::initializer_list<const char *> lines) {
 
 void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
                             const CurrentControl &current, const VoltageMonitor &voltage,
-                            const PowerMonitor &power, const EfficiencyEstimator &efficiency) {
+                            const PowerMonitor &power) {
     const float pdVoltageV       = pd.getVoltage();
     const float pdCurrentA       = pd.getCurrent();
     const float measuredVoltageV = power.getInputVoltage();
@@ -35,7 +34,11 @@ void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
     const float currentLimitA    = current.getCurrentLimitA();
     const float maxPowerW        = outputVoltageV * currentLimitA;
     const float tempC            = thermal.getTemperatureC();
-    const float efficiencyPct    = efficiency.getEfficiency() * 100.0f;
+    const float allowedInputPowerW = pdCurrentA * measuredVoltageV;
+    const float measuredInputPowerW = measuredVoltageV * measuredCurrentA;
+    const float inputUtilizationPct = allowedInputPowerW > 0.0f
+        ? measuredInputPowerW / allowedInputPowerW * 100.0f
+        : 0.0f;
     const char *pdFaultText      = pd.getProtectionFaultText();
 
     // PD contract plus input.
@@ -48,8 +51,8 @@ void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
     // Output power plus input volts.
     _tft.drawString("Max: " + String(maxPowerW, 1) + "W  in " + String(measuredVoltageV, 1) + "V", 5, 65);
 
-    // Temperature plus efficiency.
-    _tft.drawString("Temp: " + String(tempC, 1) + "C " + String(efficiencyPct, 0) + "%", 5, 95);
+    // Temperature plus input-power utilization.
+    _tft.drawString("T: " + String(tempC, 0) + "C Util: " + String(inputUtilizationPct, 0) + "%", 5, 95);
 
     // Shutdown, chip fault, INA alert.
     if (pd.isShutdownLatched()) {

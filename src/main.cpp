@@ -1,13 +1,12 @@
 #include <Arduino.h>
 #include <Wire.h>
-#include <math.h>
 #include "PDManager.h"
 #include "ThermalManager.h"
 #include "PowerMonitor.h"
 #include "CurrentControl.h"
 #include "VoltageMonitor.h"
 #include "DisplayManager.h"
-#include "EfficiencyEstimator.h"
+#include "InputPowerUtilizationController.h"
 #include "DiagLog.h"
 
 // TTGO T-Display I2C pins.
@@ -28,10 +27,11 @@ static PowerMonitor        powerMonitor;
 static CurrentControl      currentControl;
 static VoltageMonitor      voltageMonitor;
 static DisplayManager      displayManager;
-static EfficiencyEstimator efficiencyEstimator;
+static InputPowerUtilizationController inputPowerUtilizationController;
 
 static constexpr float kElectronicsPowerW          = 1.0f;  // Electronics overhead. Measured: 0.7W idle (.55 fan), 1.3W max fan
 static constexpr float kNoLoadInputW               = 5.0f;  // Treat PD-input power below this threshold as no load.
+static constexpr uint32_t kPowerFeedbackIntervalMs = 25;  // Half of kRampStepIntervalMs in CurrentControl.cpp.
 
 class PeriodicTask {
 public:
@@ -57,11 +57,11 @@ static float calculateOutputPowerLimit(float inputPowerLimitW) {
     }
 
     const float regulatorInputPowerW = inputPowerLimitW - kElectronicsPowerW;
-    return regulatorInputPowerW * efficiencyEstimator.getEfficiency();
+    return regulatorInputPowerW * inputPowerUtilizationController.getOutputPowerFactor();
 }
 
 static void updateDisplay() {
-    displayManager.update(pdManager, thermalManager, currentControl, voltageMonitor, powerMonitor, efficiencyEstimator);
+    displayManager.update(pdManager, thermalManager, currentControl, voltageMonitor, powerMonitor);
 }
 
 static void updateThermal() {
@@ -128,28 +128,25 @@ static void updateCurrentControl() {
     currentControl.update(outputPowerLimit, noLoad);
 }
 
-static void updateEfficiency() {
+static void updateInputPowerUtilization() {
     const float inputVoltageV = powerMonitor.getInputVoltage();
     const float allowedInputPowerW = pdManager.getCurrent() * inputVoltageV;
-    const float actualInputPowerW  = inputVoltageV * powerMonitor.getInputCurrent();
+    const float actualInputPowerW = inputVoltageV * powerMonitor.getInputCurrent();
     const bool noLoad = actualInputPowerW < kNoLoadInputW;
 
-
-    const float allowedRegulatorInputW = allowedInputPowerW - kElectronicsPowerW;
-    const float actualRegulatorInputW = actualInputPowerW - kElectronicsPowerW;
-    efficiencyEstimator.update(allowedRegulatorInputW,
-                               actualRegulatorInputW,
-                               currentControl.isRampUpFinished(),
-                               noLoad);
+    inputPowerUtilizationController.update(allowedInputPowerW - kElectronicsPowerW,
+                                           actualInputPowerW - kElectronicsPowerW,
+                                           currentControl.isRampUpFinished(),
+                                           noLoad);
 }
 
 static PeriodicTask displayTask(100, updateDisplay);
 static PeriodicTask thermalUpdateTask(1000, updateThermal);
 static PeriodicTask pdUpdateTask(50, updatePd);
 static PeriodicTask voltageUpdateTask(100, updateVoltage);
-static PeriodicTask powerMonitorUpdateTask(50, updatePowerMonitor);
-static PeriodicTask currentUpdateTask(50, updateCurrentControl);
-static PeriodicTask efficiencyUpdateTask(50, updateEfficiency);
+static PeriodicTask powerMonitorUpdateTask(kPowerFeedbackIntervalMs, updatePowerMonitor);
+static PeriodicTask currentUpdateTask(kPowerFeedbackIntervalMs, updateCurrentControl);
+static PeriodicTask inputPowerUtilizationTask(kPowerFeedbackIntervalMs, updateInputPowerUtilization);
 static PeriodicTask pdDiagTask(2000, logSystemDiagnostics);
 static PeriodicTask diagHistoryTask(10000, dumpDiagnosticHistory);
 
@@ -161,7 +158,7 @@ void setup() {
 
     currentControl.begin(Wire, voltageMonitor);
     displayManager.begin();
-    efficiencyEstimator.begin();
+    inputPowerUtilizationController.begin();
 
     while (!pdManager.begin(Wire, kPdIntPin)) {
         displayManager.showMessage({"PD controller", "not found!"});
@@ -186,7 +183,7 @@ void loop() {
     pdDiagTask.tick();
     diagHistoryTask.tick();
 
+    inputPowerUtilizationTask.tick();
     currentUpdateTask.tick();
-    efficiencyUpdateTask.tick();
     displayTask.tick();
 }
