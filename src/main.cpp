@@ -163,7 +163,7 @@ void setup() {
     }
 
     voltageMonitor.begin(33, pdManager);  // Divider ADC input.
-    if (!thermalManager.begin(Wire, kFanPin, pdManager)) {
+    if (!thermalManager.begin(kFanPin, pdManager)) {
         DiagLog::event("safety temp sensor");
     }
 
