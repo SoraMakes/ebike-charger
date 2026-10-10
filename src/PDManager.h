@@ -2,79 +2,93 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include <Adafruit_HUSB238.h>
+#include <AP33772S.h>
 
-/// Negotiation state for the active USB-PD source.
 enum class PDNegotiationState : uint8_t {
-    Disconnected,        ///< No source attached.
-    AttachSettle,        ///< Source just attached; letting CC/cable detection settle.
-    WaitingCapabilities, ///< Waiting for the source's capability table.
-    Requesting,          ///< A PDO was selected and requested; waiting for the contract.
-    Ready,               ///< The requested (or default 5 V) contract is active.
+    Disconnected,
+    AttachSettle,
+    Requesting,
+    Ready,
 };
 
-/// Manages USB-PD source negotiation: detects attachment, probes the
-/// available voltages from highest to lowest, requests the best one, and
-/// re-negotiates automatically on reconnect or contract fallback.
 class PDManager {
 public:
     PDManager() = default;
-
-    /// Initializes the USB-PD controller on the specified I2C bus.
-    /// @return true when the controller is available.
-    bool begin(TwoWire &wire);
-
-    /// Advances the negotiation state machine. Call this periodically (e.g. every 100-250 ms).
+    bool begin(TwoWire &wire, int8_t intPin);
     void update();
 
-    /// Reports whether a USB-PD source is currently attached (may still be negotiating).
-    bool isAttached() const;
-
-    /// Reports whether a contract is active and ready for use.
+    // PD-input volts, not 5V aux.
+    void setMeasuredInputVoltage(float volts);
     bool isReady() const;
-
-    /// True once when a source becomes ready (initial contract or after re-negotiation).
-    bool justAttached();
-
-    /// True once when a previously ready source goes away.
-    bool justDetached();
-
-    /// True once when the active contract voltage changes while already ready
-    /// (e.g. the source falls back to 5 V).
-    bool voltageJumped();
-
-    /// Returns the voltage of the active source contract in volts.
+    bool justAttached() const;
+    // Contract voltage changed while Ready.
+    bool voltageJumped() const;
     float getVoltage() const;
-
-    /// Returns the current limit of the active source contract in amps.
     float getCurrent() const;
+    /// Latched cut-out with reason.
+    void shutdown(const char *reason = nullptr);
+    bool isShutdownLatched() const { return _shutdownLatched; }
+    const char *getShutdownReason() const { return _shutdownReason; }
 
-    /// Returns the power limit of the active source contract in watts.
-    float getWattage() const;
+    PDNegotiationState getState() const { return _state; }
+    uint8_t getStickyStatus() const { return _statusSticky; }
+    uint8_t getOpMode() { return _pd.readOpMode(); }
+    uint8_t getMsgResult() { return static_cast<uint8_t>(_pd.readMsgResult() & 0x07); }
+    const char *getFaultText() const;
+    bool hasChipFault() const;
 
 private:
-    /// Requests source capabilities and (re)starts negotiation.
-    void requestCapabilities();
+    static constexpr float kMaxRequestVoltageV = 28.0f;
+    static constexpr float kMinUsablePdoCurrentA = 1.25f;
+    // Below this is sensor failure, not dead input.
+    static constexpr float kInputValidMinV = 3.0f;
+    static constexpr uint32_t kAttachSettlePollMs = 150;
 
-    /// Scans available PDOs from highest to lowest voltage, logs them, and
-    /// requests the first (highest) one found.
-    /// @return true if a PDO above 5 V was found and requested.
-    bool selectAndRequestBestPdo();
+    bool requestBestPdo();
+    uint8_t findBestFixedPdo() const;
+    void applyStartupConfig();
+    uint8_t pollStatus();
+    bool attemptRecovery();
+    void enter(PDNegotiationState state);
+    uint8_t pollInputs(uint8_t &opMode);
+    void handleChipRestart(uint8_t status);
+    void handleProtectionTrip(uint8_t status);
+    void onDisconnected(uint8_t status, uint8_t opMode);
+    void onAttachSettle(uint8_t status);
+    void onRequesting();
+    void onReady(uint8_t status);
 
-    Adafruit_HUSB238 _husb;
+    AP33772S _pd;
 
-    PDNegotiationState _state            = PDNegotiationState::Disconnected;
-    uint32_t           _stateEnteredAt   = 0;
-    float              _requestedVoltage = 0.0f;
-    uint8_t            _failedAttachReads = 0;
+    int8_t _intPin = -1;
 
-    float _voltage = 0.0f;
-    float _current = 0.0f;
+    PDNegotiationState _state = PDNegotiationState::Disconnected;
+    uint32_t _stateEnteredAt = 0;
+    uint32_t _lastStatusPollMs = 0;
+    uint32_t _lastPdoPollMs = 0;
+    uint32_t _contractLostSinceMs = 0;
+    uint32_t _lastRecoveryMs = 0;
+    uint32_t _nextRequestAllowedMs = 0;
+
+    float   _voltage = 0.0f;
+    float   _current = 0.0f;
 
     bool _justAttached  = false;
-    bool _justDetached  = false;
     bool _voltageJumped = false;
 
-    static float _voltageFromActiveSetting(HUSB238_VoltageSetting vs);
-    static float _ampsFromCurrentSetting(HUSB238_CurrentSetting cur);
+    bool _shutdownLatched = false;
+    char _shutdownReason[17] = "";
+    bool _configured      = false;
+
+    // CC legacy + PD source bits.
+    static constexpr uint8_t kOpModeSourceMask = 0x03;
+    // VREQ match window.
+    static constexpr float kVoltageMatchV = 0.5f;
+    uint8_t _statusSticky = 0;
+    uint8_t _lastStatus = 0;
+    uint8_t _lastOpMode = 0xFF;
+    // PD-input volts; fail-open when invalid.
+    float _inputVoltageV = 0.0f;
+    bool _inputValid = false;
 };
+

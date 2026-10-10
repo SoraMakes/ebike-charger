@@ -1,5 +1,6 @@
 #include "ThermalManager.h"
-#include "CurrentControl.h"
+#include "PDManager.h"
+#include "DiagLog.h"
 
 static constexpr float kFanMinimumTemperatureC = 32.0f;
 static constexpr float kFanFullTemperatureC = 38.0f;
@@ -8,27 +9,25 @@ static constexpr float kShutdownTemperatureC = 50.0f;
 static constexpr float kMaximumThermalPowerW = 100.0f;
 static constexpr uint16_t kPwmRange = 1023;
 static constexpr uint32_t kFanPwmFrequencyHz = 16000;
-static constexpr uint16_t kFanMinimumDuty = 563;  // approximately 55% of 1023
+static constexpr uint16_t kFanMinimumDuty = 563;
 static constexpr uint16_t kFanFullDuty = kPwmRange;
 
-// ESP32 LEDC channel used for the fan PWM.
+// Fan PWM channel.
 static constexpr uint8_t kFanLedcChannel = 0;
 
-bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin, CurrentControl &currentControl) {
+bool ThermalManager::begin(TwoWire &wire, uint8_t fanPin, PDManager &pdManager) {
     _fanPin = fanPin;
-    _currentControl = &currentControl;
-    // ESP32: configure the LEDC PWM peripheral for the fan.
+    _pdManager = &pdManager;
     const uint32_t configuredFrequency = ledcSetup(kFanLedcChannel, kFanPwmFrequencyHz, 10);
     if (configuredFrequency == 0) {
-        Serial.println("[THERM] Fan PWM setup failed");
+        DiagLog::event("safety fan pwm");
     }
     pinMode(_fanPin, OUTPUT);
-    // Attach LEDC after pinMode: on ESP32 pinMode configures the GPIO matrix
-    // and must not overwrite the peripheral output routing.
+    // pinMode before attach.
     ledcAttachPin(_fanPin, kFanLedcChannel);
 
-    applyFanPwm(kFanFullDuty);
-    _sensorFault = !_sensor.begin(&wire, 0, 0x38);
+    applyFanPwm(kFanMinimumDuty);
+    _sensorFault = !_sensor.begin(0x76);
     if (_sensorFault) {
         enterShutdown("Temp failed");
         return false;
@@ -45,19 +44,17 @@ void ThermalManager::update() {
         return;
     }
 
-    sensors_event_t humidity;
-    sensors_event_t temperature;
-    _sensor.getEvent(&humidity, &temperature);
+    const float temperature = _sensor.readTemperature();
 
-    if (!isfinite(temperature.temperature) ||
-        temperature.temperature < -40.0f || temperature.temperature > 85.0f) {
+    if (!isfinite(temperature) ||
+        temperature < -40.0f || temperature > 85.0f) {
         _sensorFault = true;
         enterShutdown("Temp invalid");
         return;
     }
 
     _sensorFault = false;
-    _temperatureC = temperature.temperature;
+    _temperatureC = temperature;
 
     uint16_t fanDuty = kFanMinimumDuty;
     if (_temperatureC >= kFanFullTemperatureC) {
@@ -98,16 +95,15 @@ bool ThermalManager::isShutdownLatched() const {
 }
 
 void ThermalManager::applyFanPwm(uint16_t duty) const {
-    // ESP32: write via the LEDC peripheral.
     ledcWrite(kFanLedcChannel, duty);
 }
 
 void ThermalManager::enterShutdown(const char *reason) {
     if (!_shutdownLatched) {
-        Serial.printf("[THERM] Shutdown: %s\n", reason);
+        DiagLog::event("safety %s", reason);
     }
     _shutdownLatched = true;
     _outputPowerLimitW = 0.0f;
     applyFanPwm(kFanFullDuty);
-    _currentControl->requestShutdown(reason);
+    _pdManager->shutdown(reason);
 }
