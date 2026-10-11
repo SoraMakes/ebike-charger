@@ -25,6 +25,13 @@ pio device monitor
 
 Settings live in `platformio.ini`.
 
+## Tests
+
+- When adding behavior, fixing a bug, or changing existing behavior, consider whether tests need adding or updating; consult `test/AGENTS.md` for test work.
+- Update tests alongside code changes when behavior changes.
+- Native regression tests use Unity and run with `pio test -e native`.
+- Keep native mocks isolated to the native test environment; production builds must use the real framework and libraries.
+
 ## Gotchas
 
 - TFT config lives in `platformio.ini` `build_flags` — never edit `User_Setup.h` manually.
