@@ -30,5 +30,6 @@ private:
     float _busVoltage = 0.0f;
     float _current    = 0.0f;
     uint16_t _alertSticky = 0;
+    uint8_t _consecutiveReadErrors = 0;
     bool _sensorFault = false;
 };

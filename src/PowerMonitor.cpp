@@ -7,6 +7,7 @@ static constexpr float    kShuntMaxCurrentA = 7.0f;
 static constexpr float    kShuntResistorOhm = 0.005f;
 // Overcurrent alert includes headroom for inrush.
 static constexpr uint32_t kOverCurrentLimitMa = 6500;
+static constexpr uint8_t kReadErrorsBeforeShutdown = 4;
 static constexpr uint16_t kMonitoredFaultMask =
     (1 << INA238_DIAG_SHUNT_OVER_LIMIT) |
     (1 << INA238_DIAG_SHUNT_UNDER_LIMIT) |
@@ -38,11 +39,11 @@ void PowerMonitor::update() {
         return;
     }
 
-    _busVoltage = _ina.getBusVoltage();
+    const float busVoltage = _ina.getBusVoltage();
     if (!checkReadError("voltage")) {
         return;
     }
-    _current    = _ina.getAmpere();
+    const float current = _ina.getAmpere();
     if (!checkReadError("current")) {
         return;
     }
@@ -51,6 +52,11 @@ void PowerMonitor::update() {
     if (!checkReadError("diagnostics")) {
         return;
     }
+    // Commit readings only after all I2C reads succeed, preserving the last complete sample on error.
+    _busVoltage = busVoltage;
+    _current = current;
+    _consecutiveReadErrors = 0;
+
     const uint16_t newlyLatchedFaults = diag & kMonitoredFaultMask & ~_alertSticky;
     if (newlyLatchedFaults == 0) {
         return;
@@ -65,8 +71,16 @@ bool PowerMonitor::checkReadError(const char *measurement) {
         return true;
     }
 
-    _sensorFault = true;
-    DiagLog::event("ina %s read error %d", measurement, error);
+    ++_consecutiveReadErrors;
+    if (_consecutiveReadErrors == kReadErrorsBeforeShutdown - 2 ||
+        _consecutiveReadErrors == kReadErrorsBeforeShutdown - 1) {
+        DiagLog::event("ina %s read error %d (%u/%u)", measurement, error,
+                       static_cast<unsigned>(_consecutiveReadErrors),
+                       static_cast<unsigned>(kReadErrorsBeforeShutdown));
+    }
+    if (_consecutiveReadErrors >= kReadErrorsBeforeShutdown) {
+        _sensorFault = true;
+    }
     return false;
 }
 
