@@ -33,7 +33,7 @@ void test_reduces_factor_proportionally_above_target() {
 
     controller.update(100.0f, 100.0f, true, false);
 
-    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.7889f, controller.getOutputPowerFactor());
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.78085f, controller.getOutputPowerFactor());
 }
 
 void test_ignores_invalid_available_power() {

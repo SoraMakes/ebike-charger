@@ -107,18 +107,18 @@ void DisplayManager::updateStatus(PDManager &pd, const ThermalManager &thermal,
         : 0.0f;
 
     // Show the PD contract and measured input utilization.
-    _tft.drawString("I: " + String(pdVoltageV, 0) + "V/" + String(pdCurrentA, 1) + "A | " + String(inputUtilizationPct, 0) + "%", 5, 5);
+    _tft.drawString("I: " + String(pdVoltageV, 0) + "V/" + String(pdCurrentA, 1) + "A | " + String(inputUtilizationPct, 0) + "%  ", 5, 5);
 
     // Put measured input voltage and current below the contract line.
     _tft.setTextSize(1);
-    _tft.drawString("Actual: " + String(measuredVoltageV, 1) + "V " + String(measuredCurrentA, 1) + "A", 5, 23);
+    _tft.drawString("Actual: " + String(measuredVoltageV, 1) + "V " + String(measuredCurrentA, 1) + "A  ", 5, 23);
     _tft.setTextSize(2);
 
     // Show output voltage, estimated current, and power.
-    _tft.drawString("O: " + String(outputVoltageV, 1) + "V " + String(currentLimitA, 1) + "A " + String(maxPowerW, 0) + "W", 5, 42);
+    _tft.drawString("O: " + String(outputVoltageV, 1) + "V " + String(currentLimitA, 2) + "A " + String(maxPowerW, 0) + "W  ", 5, 42);
 
-    _tft.drawString("T: " + String(tempC, 0) + "C", 5, 75);
-    _tft.drawString(limitedCurrentMode ? "LIMIT: 2A     " : "              ", 5, 95);
+    _tft.drawString("T: " + String(tempC, 0) + "C  ", 5, 75);
+    _tft.drawString(limitedCurrentMode ? "LIMIT: 2A  " : "              ", 5, 95);
 
     updateFaultStatus(pd, power);
 }
@@ -128,11 +128,11 @@ void DisplayManager::updateFaultStatus(const PDManager &pd, const PowerMonitor &
 
     // Show the most important active fault.
     if (pd.isShutdownLatched()) {
-        _tft.drawString("STOP: " + String(pd.getShutdownReason()) + "      ", 5, 118);
+        _tft.drawString("STOP: " + String(pd.getShutdownReason()) + "  ", 5, 118);
     } else if (pd.hasProtectionFault()) {
-        _tft.drawString("PD FAULT: " + String(pdFaultText) + "     ", 5, 118);
+        _tft.drawString("PD FAULT: " + String(pdFaultText) + "  ", 5, 118);
     } else if (power.hasAlert()) {
-        _tft.drawString("INA FAULT: " + String(power.getAlertText()) + "    ", 5, 118);
+        _tft.drawString("INA FAULT: " + String(power.getAlertText()) + "  ", 5, 118);
     } else {
         _tft.drawString("                    ", 5, 118);
     }
