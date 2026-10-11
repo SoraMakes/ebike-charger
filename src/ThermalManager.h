@@ -5,7 +5,7 @@
 
 class PDManager;
 
-/// Temperature sensing plus fan and thermal power limit.
+/// Temperature sensing, fan control, and thermal power derating.
 class ThermalManager {
 public:
     /// Initialize fan PWM and the temperature sensor.
@@ -16,15 +16,15 @@ public:
     void enableFan();
     /// Return the most recently accepted temperature reading in Celsius.
     float getTemperatureC() const;
-    /// Return the current thermally allowed output power in watts.
-    float getOutputPowerLimitW() const;
+    /// Return the thermal output-power limit factor, from 1.0 to 0.0.
+    float getOutputPowerLimitFactor() const;
     /// Return true if sensor initialization or a temperature reading failed.
     bool hasSensorFault() const;
 
 private:
     Adafruit_BMP280 _sensor;
     float _temperatureC = 25.0f;
-    float _outputPowerLimitW = 0.0f;
+    float _outputPowerLimitFactor = 0.0f;
     bool _sensorFault = true;
     bool _shutdownLatched = false;
     bool _fanEnabled = false;
@@ -32,6 +32,5 @@ private:
 
     void applyFanPwm(uint16_t duty) const;
     uint16_t calculateFanDuty(float temperatureC) const;
-    float calculateOutputPowerLimit(float temperatureC) const;
     void enterShutdown(const char *reason);
 };

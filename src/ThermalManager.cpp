@@ -1,14 +1,12 @@
 #include "ThermalManager.h"
 #include "PDManager.h"
 #include "DiagLog.h"
+#include "ThermalPowerDerating.h"
 
 static constexpr float kFanMinimumTemperatureC = 32.0f;
 static constexpr float kFanFullTemperatureC = 38.0f;
-static constexpr float kDeratingTemperatureC = 40.0f;
-static constexpr float kShutdownTemperatureC = 50.0f;
 static constexpr float kSensorMinimumTemperatureC = -40.0f;
 static constexpr float kSensorMaximumTemperatureC = 85.0f;
-static constexpr float kMaximumThermalPowerW = 100.0f;
 static constexpr uint16_t kPwmRange = 1023;
 static constexpr uint32_t kFanPwmFrequencyHz = 16000;
 // Minimum duty keeps the fan spinning reliably.
@@ -36,7 +34,7 @@ void ThermalManager::begin(uint8_t fanPin, PDManager &pdManager) {
         return;
     }
 
-    _outputPowerLimitW = kMaximumThermalPowerW;
+    _outputPowerLimitFactor = ThermalPowerDerating::limitFactorForTemperatureC(_temperatureC);
 }
 
 void ThermalManager::update() {
@@ -56,13 +54,13 @@ void ThermalManager::update() {
     _sensorFault = false;
     _temperatureC = temperature;
 
-    if (_temperatureC >= kShutdownTemperatureC) {
+    if (_temperatureC >= ThermalPowerDerating::kShutdownTemperatureC) {
         enterShutdown("overtemperature");
         return;
     }
 
     applyFanPwm(_fanEnabled ? calculateFanDuty(_temperatureC) : 0);
-    _outputPowerLimitW = calculateOutputPowerLimit(_temperatureC);
+    _outputPowerLimitFactor = ThermalPowerDerating::limitFactorForTemperatureC(_temperatureC);
 }
 
 void ThermalManager::enableFan() {
@@ -87,22 +85,12 @@ uint16_t ThermalManager::calculateFanDuty(float temperatureC) const {
     return static_cast<uint16_t>(kFanMinimumDuty + temperatureRatio * (kFanFullDuty - kFanMinimumDuty));
 }
 
-float ThermalManager::calculateOutputPowerLimit(float temperatureC) const {
-    if (temperatureC <= kDeratingTemperatureC) {
-        return kMaximumThermalPowerW;
-    }
-
-    const float deratingRatio = (temperatureC - kDeratingTemperatureC) /
-        (kShutdownTemperatureC - kDeratingTemperatureC);
-    return kMaximumThermalPowerW * (1.0f - deratingRatio);
-}
-
 float ThermalManager::getTemperatureC() const {
     return _temperatureC;
 }
 
-float ThermalManager::getOutputPowerLimitW() const {
-    return _outputPowerLimitW;
+float ThermalManager::getOutputPowerLimitFactor() const {
+    return _outputPowerLimitFactor;
 }
 
 bool ThermalManager::hasSensorFault() const {
@@ -118,7 +106,7 @@ void ThermalManager::enterShutdown(const char *reason) {
         DiagLog::event("safety %s", reason);
     }
     _shutdownLatched = true;
-    _outputPowerLimitW = 0.0f;
+    _outputPowerLimitFactor = 0.0f;
     applyFanPwm(kFanFullDuty);
     _pdManager->shutdown(reason);
 }
