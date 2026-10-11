@@ -8,6 +8,14 @@
 
 uint32_t millis();
 
+static constexpr uint8_t INPUT = 0x01;
+static constexpr uint8_t INPUT_PULLUP = 0x02;
+static constexpr int LOW = 0;
+static constexpr int HIGH = 1;
+
+void pinMode(uint8_t pin, uint8_t mode);
+int digitalRead(uint8_t pin);
+
 class FakeSerial {
 public:
     int printf(const char *format, ...) {
