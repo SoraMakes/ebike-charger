@@ -39,3 +39,11 @@ The serial monitor uses **115200 baud**. The required libraries are declared in
 - Spannungswandler Steuerung auf positive side controlled umstellen. Mit negeative side kann nicht der ganze Wandler
 abgeschaltet werden, sondern nur nach dem Ausgang des Wandlers, da über den digipot GND des VR mit dem allgemeinen GND
 verbunden ist. Dadurch wird ein low side MOSFET vor dem VR umgangen
+
+
+# calibration
+output voltage
+3538: 40.8V
+4000: 45,7V
+3128: 36,5V
+2510: 29.9V

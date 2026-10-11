@@ -9,9 +9,9 @@ static constexpr float kShutdownVoltageV = 42.5f;
 static constexpr float kAdcVoltageFullScaleV = 50.67f;
 static constexpr float kAdcResolution       = 4096.0f;
 
-// 30-41V fit.
-static constexpr float kVoltageCalibrationGain   = 0.854f;
-static constexpr float kVoltageCalibrationOffset = 1.73636f;
+// Linear fit from ADC and meter readings spanning 29.9-45.7V.
+static constexpr float kVoltageCalibrationGain   = 0.85666f;
+static constexpr float kVoltageCalibrationOffset = 3.31725f;
 
 void VoltageMonitor::begin(uint8_t adcPin, PDManager &pdManager) {
     _adcPin = adcPin;
