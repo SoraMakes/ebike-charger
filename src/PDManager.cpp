@@ -148,7 +148,7 @@ void PDManager::handleChipRestart(uint8_t status) {
         beginRenegotiation();
         _nextRequestAllowedMs = 0;
     } else {
-        _pd.setOutput(0);
+        // Preserve VOUT while waiting for source capabilities (capacitor precharge).
         _nextRequestAllowedMs = 0;
         _lastPdoPollMs = 0;
     }
@@ -167,7 +167,8 @@ void PDManager::onDisconnected(uint8_t status, uint8_t opMode) {
         return;
     }
     applyStartupConfig();
-    _pd.setOutput(0);
+    // Connect at the default 5 V profile to precharge downstream input capacitors.
+    _pd.setOutput(1);
     enter(PDNegotiationState::WaitingForSourceCapabilities);
     _lastPdoPollMs = 0;
     _nextRequestAllowedMs = 0;
@@ -303,7 +304,7 @@ bool PDManager::detectBestPdoContractChange() {
 }
 
 void PDManager::beginRenegotiation() {
-    _pd.setOutput(0);
+    // Keep VOUT connected as the source transitions to the requested profile.
     _voltage = 0.0f;
     _current = 0.0f;
     _contractChanged = true;
