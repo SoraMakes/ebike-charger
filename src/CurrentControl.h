@@ -10,7 +10,9 @@ public:
     void begin(TwoWire &wire, VoltageMonitor &voltageMonitor);
 
     /// Output-power bound; noLoad holds low until load rises.
-    void update(float limitWatts, bool noLoad);
+    /// @param maximumCurrentA Mode-selected current ceiling, further bounded by
+    ///        the firmware-wide output-current cap.
+    void update(float limitWatts, bool noLoad, float maximumCurrentA);
 
     /// Minimum-current setpoint; still sources ~0.14 A.
     /// Permanent cut-out is PDManager::shutdown().

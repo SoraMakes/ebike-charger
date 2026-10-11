@@ -4,6 +4,7 @@
 #include "ThermalManager.h"
 #include "PowerMonitor.h"
 #include "CurrentControl.h"
+#include "ChargingCurrentLimit.h"
 #include "VoltageMonitor.h"
 #include "DisplayManager.h"
 #include "ButtonManager.h"
@@ -26,6 +27,7 @@ static PDManager           pdManager;
 static ThermalManager      thermalManager;
 static PowerMonitor        powerMonitor;
 static CurrentControl      currentControl;
+static ChargingCurrentLimit chargingCurrentLimit;
 static VoltageMonitor      voltageMonitor;
 static DisplayManager      displayManager;
 static ButtonManager       buttonManager;
@@ -63,7 +65,7 @@ static float calculateOutputPowerLimit(float inputPowerLimitW) {
 }
 
 static void updateDisplay() {
-    displayManager.update(pdManager, thermalManager, currentControl, voltageMonitor, powerMonitor);
+    displayManager.update(pdManager, thermalManager, currentControl, voltageMonitor, powerMonitor,chargingCurrentLimit.isLimited());
 }
 
 static void handleButtonPresses() {
@@ -71,7 +73,9 @@ static void handleButtonPresses() {
     if (events.button1Pressed) {
         displayManager.toggleDisplayMode();
     }
-    // Handle events.button2Pressed here once Button 2 has an assigned action.
+    if (events.button2Pressed) {
+        chargingCurrentLimit.toggle();
+    }
 }
 
 static void updateThermal() {
@@ -141,7 +145,7 @@ static void updateCurrentControl() {
     const float pdOutputPowerLimit = calculateOutputPowerLimit(allowedInputPowerW);
     const float outputPowerLimit = pdOutputPowerLimit * thermalManager.getOutputPowerLimitFactor();
 
-    currentControl.update(outputPowerLimit, noLoad);
+    currentControl.update(outputPowerLimit, noLoad, chargingCurrentLimit.maximumCurrentA());
 }
 
 static void updateInputPowerUtilization() {
@@ -175,6 +179,7 @@ void setup() {
     Serial.setTxBufferSize(kSerialTxBufferSizeBytes);
     Serial.begin(115200);
 
+    chargingCurrentLimit.begin();
     buttonManager.begin();
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 

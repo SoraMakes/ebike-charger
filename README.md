@@ -34,6 +34,12 @@ The serial monitor uses **115200 baud**. The required libraries are declared in
 | TFT RST | 23 | Display reset |
 | TFT BL | 4 | Display backlight |
 
+## Controls
+
+- Button 1 switches between the status and diagnostic event-log views.
+- Button 2 toggles between a 2 A limit and "unlimited". The 2 A is shown
+  on the status display; the selected mode is saved across power losses.
+
 ## TODOs:
 
 - Spannungswandler Steuerung auf positive side controlled umstellen. Mit negeative side kann nicht der ganze Wandler

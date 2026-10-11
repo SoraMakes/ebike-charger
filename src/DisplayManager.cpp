@@ -74,7 +74,7 @@ void DisplayManager::updateEventLog() {
 
 void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
                             const CurrentControl &current, const VoltageMonitor &voltage,
-                            const PowerMonitor &power) {
+                            const PowerMonitor &power, bool limitedCurrentMode) {
     if (_showEventLog) {
         updateEventLog();
         return;
@@ -86,12 +86,12 @@ void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
         _screenDirty = false;
     }
 
-    updateStatus(pd, thermal, current, voltage, power);
+    updateStatus(pd, thermal, current, voltage, power, limitedCurrentMode);
 }
 
 void DisplayManager::updateStatus(PDManager &pd, const ThermalManager &thermal,
                                   const CurrentControl &current, const VoltageMonitor &voltage,
-                                  const PowerMonitor &power) {
+                                  const PowerMonitor &power, bool limitedCurrentMode) {
     const float pdVoltageV       = pd.getVoltage();
     const float pdCurrentA       = pd.getCurrent();
     const float measuredVoltageV = power.getInputVoltage();
@@ -118,6 +118,7 @@ void DisplayManager::updateStatus(PDManager &pd, const ThermalManager &thermal,
     _tft.drawString("O: " + String(outputVoltageV, 1) + "V " + String(currentLimitA, 1) + "A " + String(maxPowerW, 0) + "W", 5, 42);
 
     _tft.drawString("T: " + String(tempC, 0) + "C", 5, 75);
+    _tft.drawString(limitedCurrentMode ? "LIMIT: 2A     " : "              ", 5, 95);
 
     updateFaultStatus(pd, power);
 }

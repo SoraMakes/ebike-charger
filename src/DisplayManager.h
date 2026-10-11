@@ -23,7 +23,7 @@ public:
 
     void update(PDManager &pd, const ThermalManager &thermal,
                 const CurrentControl &current, const VoltageMonitor &voltage,
-                const PowerMonitor &power);
+                const PowerMonitor &power, bool limitedCurrentMode);
 
 private:
     TFT_eSPI _tft = TFT_eSPI();
@@ -33,7 +33,7 @@ private:
 
     void updateStatus(PDManager &pd, const ThermalManager &thermal,
                       const CurrentControl &current, const VoltageMonitor &voltage,
-                      const PowerMonitor &power);
+                      const PowerMonitor &power, bool limitedCurrentMode);
     void updateEventLog();
     void updateFaultStatus(const PDManager &pd, const PowerMonitor &power);
 };

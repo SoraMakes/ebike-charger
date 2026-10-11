@@ -10,7 +10,8 @@ static constexpr uint32_t kRampStepIntervalMs = 50;
 // Output-current calibration.
 static constexpr float kCurrentAtStepZeroA   = 0.0959f;
 static constexpr float kCurrentPerStepA      = 0.06011f;
-static constexpr float kMaxAllowedOutputAmps = 3.0f;
+// Absolute firmware cap; update() also applies the mode-selected limit.
+static constexpr float kMaxAllowedOutputAmps = 4.0f;
 
 // No-load hold step (~0.37A).
 static constexpr int16_t kNoLoadHoldStep = 4;
@@ -22,7 +23,7 @@ void CurrentControl::begin(TwoWire &wire, VoltageMonitor &voltageMonitor) {
     minimumCurrent();
 }
 
-void CurrentControl::update(float limitWatts, bool noLoad) {
+void CurrentControl::update(float limitWatts, bool noLoad, float maximumCurrentA) {
     const uint32_t now = millis();
     const float outputVoltageV = _voltageMonitor->getVoltage();
 
@@ -32,7 +33,7 @@ void CurrentControl::update(float limitWatts, bool noLoad) {
     }
 
     const float targetAmps = limitWatts / outputVoltageV;
-    const float currentLimitA = min(targetAmps, kMaxAllowedOutputAmps);
+    const float currentLimitA = min(targetAmps, min(maximumCurrentA, kMaxAllowedOutputAmps));
     const int16_t currentLimitDigipotStep = ampsToStep(currentLimitA);
     _currentLimitDigipotStep = currentLimitDigipotStep;
 
