@@ -12,6 +12,8 @@ public:
     void begin(uint8_t fanPin, PDManager &pdManager);
     /// Sample temperature, update fan speed and power limit, and shut down on sensor or temperature faults.
     void update();
+    /// Enable the fan; it remains enabled afterward.
+    void enableFan();
     /// Return the most recently accepted temperature reading in Celsius.
     float getTemperatureC() const;
     /// Return the current thermally allowed output power in watts.
@@ -25,6 +27,7 @@ private:
     float _outputPowerLimitW = 0.0f;
     bool _sensorFault = true;
     bool _shutdownLatched = false;
+    bool _fanEnabled = false;
     PDManager *_pdManager = nullptr;
 
     void applyFanPwm(uint16_t duty) const;

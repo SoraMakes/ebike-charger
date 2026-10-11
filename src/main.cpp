@@ -79,6 +79,7 @@ static void updatePd() {
 
     if (pdManager.justAttached()) {
         currentControl.minimumCurrent();
+        thermalManager.enableFan();
     }
 }
 
@@ -157,6 +158,10 @@ static PeriodicTask pdDiagTask(2000, logSystemDiagnostics);
 static PeriodicTask diagHistoryTask(10000, dumpDiagnosticHistory);
 
 void setup() {
+    // prevent fan from spinning up on startup
+    digitalWrite(kFanPin, LOW);
+    pinMode(kFanPin, OUTPUT);
+
     Serial.setTxBufferSize(kSerialTxBufferSizeBytes);
     Serial.begin(115200);
 

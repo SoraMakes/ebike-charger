@@ -29,7 +29,7 @@ void ThermalManager::begin(uint8_t fanPin, PDManager &pdManager) {
     // pinMode before attach.
     ledcAttachPin(fanPin, kFanLedcChannel);
 
-    applyFanPwm(kFanMinimumDuty);
+    applyFanPwm(0);
     _sensorFault = !_sensor.begin(0x76);
     if (_sensorFault) {
         enterShutdown("Temp failed");
@@ -61,8 +61,17 @@ void ThermalManager::update() {
         return;
     }
 
-    applyFanPwm(calculateFanDuty(_temperatureC));
+    applyFanPwm(_fanEnabled ? calculateFanDuty(_temperatureC) : 0);
     _outputPowerLimitW = calculateOutputPowerLimit(_temperatureC);
+}
+
+void ThermalManager::enableFan() {
+    if (_shutdownLatched || _fanEnabled) {
+        return;
+    }
+
+    _fanEnabled = true;
+    applyFanPwm(calculateFanDuty(_temperatureC));
 }
 
 uint16_t ThermalManager::calculateFanDuty(float temperatureC) const {
