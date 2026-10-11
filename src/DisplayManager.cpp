@@ -106,18 +106,18 @@ void DisplayManager::updateStatus(PDManager &pd, const ThermalManager &thermal,
         ? measuredInputPowerW / allowedInputPowerW * 100.0f
         : 0.0f;
 
-    // PD contract plus input.
-    _tft.drawString("I " + String(pdVoltageV, 0) + "V/" + String(pdCurrentA, 1) + "A " +
-                     String(measuredVoltageV, 1) + "/" + String(measuredCurrentA, 1), 5, 5);
+    // Show the PD contract and measured input utilization.
+    _tft.drawString("I: " + String(pdVoltageV, 0) + "V/" + String(pdCurrentA, 1) + "A | " + String(inputUtilizationPct, 0) + "%", 5, 5);
 
-    // Output volts plus current limit.
-    _tft.drawString("Out: " + String(outputVoltageV, 1) + "V " + String(currentLimitA, 2) + "A ", 5, 35);
+    // Put measured input voltage and current below the contract line.
+    _tft.setTextSize(1);
+    _tft.drawString("Actual: " + String(measuredVoltageV, 1) + "V " + String(measuredCurrentA, 1) + "A", 5, 23);
+    _tft.setTextSize(2);
 
-    // Output power plus input volts.
-    _tft.drawString("Max: " + String(maxPowerW, 1) + "W  in " + String(measuredVoltageV, 1) + "V", 5, 65);
+    // Show output voltage, estimated current, and power.
+    _tft.drawString("O: " + String(outputVoltageV, 1) + "V " + String(currentLimitA, 1) + "A " + String(maxPowerW, 0) + "W", 5, 42);
 
-    // Temperature plus input-power utilization.
-    _tft.drawString("T: " + String(tempC, 0) + "C Util: " + String(inputUtilizationPct, 0) + "%", 5, 95);
+    _tft.drawString("T: " + String(tempC, 0) + "C", 5, 75);
 
     updateFaultStatus(pd, power);
 }
