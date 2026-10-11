@@ -7,6 +7,7 @@ static constexpr float kFanMinimumTemperatureC = 32.0f;
 static constexpr float kFanFullTemperatureC = 38.0f;
 static constexpr float kSensorMinimumTemperatureC = -40.0f;
 static constexpr float kSensorMaximumTemperatureC = 85.0f;
+static constexpr uint8_t kReadErrorsBeforeShutdown = 2;
 static constexpr uint16_t kPwmRange = 1023;
 static constexpr uint32_t kFanPwmFrequencyHz = 16000;
 // Minimum duty keeps the fan spinning reliably.
@@ -47,11 +48,20 @@ void ThermalManager::update() {
     const bool temperatureValid = isfinite(temperature) && temperature >= kSensorMinimumTemperatureC && temperature <= kSensorMaximumTemperatureC;
     if (!temperatureValid) {
         _sensorFault = true;
-        enterShutdown("Temp invalid");
+        ++_consecutiveTemperatureReadErrors;
+        if (_consecutiveTemperatureReadErrors == kReadErrorsBeforeShutdown) {
+            DiagLog::event("temp read error %u/%u",
+                           static_cast<unsigned>(_consecutiveTemperatureReadErrors),
+                           static_cast<unsigned>(kReadErrorsBeforeShutdown));
+        }
+        if (_consecutiveTemperatureReadErrors >= kReadErrorsBeforeShutdown) {
+            enterShutdown("Temp invalid");
+        }
         return;
     }
 
     _sensorFault = false;
+    _consecutiveTemperatureReadErrors = 0;
     _temperatureC = temperature;
 
     if (_temperatureC >= ThermalPowerDerating::kShutdownTemperatureC) {

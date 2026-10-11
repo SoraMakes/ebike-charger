@@ -25,6 +25,7 @@ private:
     Adafruit_BMP280 _sensor;
     float _temperatureC = 25.0f;
     float _outputPowerLimitFactor = 0.0f;
+    uint8_t _consecutiveTemperatureReadErrors = 0;
     bool _sensorFault = true;
     bool _shutdownLatched = false;
     bool _fanEnabled = false;

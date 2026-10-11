@@ -1,6 +1,7 @@
 #include "mocks/Arduino.h"
 #include "test_support.h"
 #include "VoltageMonitor.h"
+#include "PDManager.h"
 
 uint32_t testNowMs = 0;
 float testOutputVoltageV = 10.0f;
@@ -14,6 +15,14 @@ uint32_t millis() {
 
 void pinMode(uint8_t, uint8_t) {}
 
+uint32_t ledcSetup(uint8_t, uint32_t frequency, uint8_t) {
+    return frequency;
+}
+
+void ledcAttachPin(uint8_t, uint8_t) {}
+
+void ledcWrite(uint8_t, uint32_t) {}
+
 int digitalRead(uint8_t pin) {
     if (pin == 0) {
         return testButton1Level;
@@ -26,6 +35,10 @@ int digitalRead(uint8_t pin) {
 
 float VoltageMonitor::getVoltage() const {
     return testOutputVoltageV;
+}
+
+void PDManager::shutdown(const char *) {
+    _shutdownLatched = true;
 }
 
 void clearTestSerialOutput() {
