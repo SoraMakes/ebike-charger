@@ -11,6 +11,7 @@ char s_entries[kCapacity][kTextSize];
 uint32_t s_timestampsMs[kCapacity];
 uint8_t s_head = 0;
 uint8_t s_count = 0;
+uint32_t s_eventSequence = 0;
 
 void printEntry(const char *prefix, uint32_t timestampMs, const char *text) {
     Serial.printf("%s%lu.%01lus | %s\n", prefix,
@@ -32,6 +33,7 @@ void event(const char *fmt, ...) {
     if (s_count < kCapacity) {
         ++s_count;
     }
+    ++s_eventSequence;
     printEntry("[EVT] ", timestampMs, slot);
 }
 
@@ -45,6 +47,26 @@ void dump() {
         const uint8_t index = static_cast<uint8_t>((start + i) % kCapacity);
         printEntry("", s_timestampsMs[index], s_entries[index]);
     }
+}
+
+uint8_t retainedEntryCount() {
+    return s_count;
+}
+
+uint32_t eventSequence() {
+    return s_eventSequence;
+}
+
+bool getEntry(uint8_t index, Entry &entry) {
+    if (index >= s_count) {
+        return false;
+    }
+
+    const uint8_t oldestIndex = static_cast<uint8_t>((s_head + kCapacity - s_count) % kCapacity);
+    const uint8_t ringIndex = static_cast<uint8_t>((oldestIndex + index) % kCapacity);
+    entry.timestampMs = s_timestampsMs[ringIndex];
+    memcpy(entry.text, s_entries[ringIndex], kTextSize);
+    return true;
 }
 
 }  // namespace DiagLog

@@ -6,6 +6,7 @@
 #include "CurrentControl.h"
 #include "VoltageMonitor.h"
 #include "DisplayManager.h"
+#include "ButtonManager.h"
 #include "InputPowerUtilizationController.h"
 #include "DiagLog.h"
 
@@ -27,6 +28,7 @@ static PowerMonitor        powerMonitor;
 static CurrentControl      currentControl;
 static VoltageMonitor      voltageMonitor;
 static DisplayManager      displayManager;
+static ButtonManager       buttonManager;
 static InputPowerUtilizationController inputPowerUtilizationController;
 
 static constexpr float kElectronicsPowerW          = 1.0f;  // Electronics overhead. Measured: 0.7W idle (.55 fan), 1.3W max fan
@@ -62,6 +64,14 @@ static float calculateOutputPowerLimit(float inputPowerLimitW) {
 
 static void updateDisplay() {
     displayManager.update(pdManager, thermalManager, currentControl, voltageMonitor, powerMonitor);
+}
+
+static void handleButtonPresses() {
+    const ButtonManager::PressEvents events = buttonManager.poll();
+    if (events.button1Pressed) {
+        displayManager.toggleDisplayMode();
+    }
+    // Handle events.button2Pressed here once Button 2 has an assigned action.
 }
 
 static void updateThermal() {
@@ -148,6 +158,7 @@ static void updateInputPowerUtilization() {
 }
 
 static PeriodicTask displayTask(100, updateDisplay);
+static PeriodicTask buttonTask(40, handleButtonPresses);
 static PeriodicTask thermalUpdateTask(1000, updateThermal);
 static PeriodicTask pdUpdateTask(50, updatePd);
 static PeriodicTask voltageUpdateTask(100, updateVoltage);
@@ -165,6 +176,7 @@ void setup() {
     Serial.setTxBufferSize(kSerialTxBufferSizeBytes);
     Serial.begin(115200);
 
+    buttonManager.begin();
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
     currentControl.begin(Wire, voltageMonitor);
@@ -185,6 +197,7 @@ void setup() {
 }
 
 void loop() {
+    buttonTask.tick();
     thermalUpdateTask.tick();
 
     powerMonitorUpdateTask.tick();

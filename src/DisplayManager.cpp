@@ -4,6 +4,16 @@
 #include "CurrentControl.h"
 #include "VoltageMonitor.h"
 #include "PowerMonitor.h"
+#include "DiagLog.h"
+
+#include <stdio.h>
+
+namespace {
+static constexpr uint8_t kVisibleEventRows = 15;
+static constexpr uint8_t kEventLineSpacing = 9;
+// GLCD text is 6 pixels wide; 39 characters fit within the 240-pixel display.
+static constexpr uint8_t kMaxEventLineChars = 39;
+}  // namespace
 
 void DisplayManager::begin() {
     _tft.init();
@@ -16,16 +26,72 @@ void DisplayManager::begin() {
 
 void DisplayManager::showMessage(std::initializer_list<const char *> lines) {
     _tft.fillScreen(TFT_BLACK);
+    _tft.setTextSize(2);
     int y = 0;
     for (const char *line : lines) {
         _tft.drawString(line, 5, y);
         y += 24;
     }
+    _screenDirty = true;
+}
+
+void DisplayManager::toggleDisplayMode() {
+    _showEventLog = !_showEventLog;
+    _screenDirty = true;
+}
+
+void DisplayManager::updateEventLog() {
+    const uint32_t eventSequence = DiagLog::eventSequence();
+    if (!_screenDirty && eventSequence == _shownEventSequence) {
+        return;
+    }
+
+    _tft.fillScreen(TFT_BLACK);
+    _tft.setTextSize(1);
+
+    const uint8_t retainedEntryCount = DiagLog::retainedEntryCount();
+    const uint8_t firstVisibleEntry = retainedEntryCount > kVisibleEventRows
+        ? retainedEntryCount - kVisibleEventRows
+        : 0;
+    int y = 0;
+    for (uint8_t index = firstVisibleEntry; index < retainedEntryCount; ++index) {
+        DiagLog::Entry entry;
+        if (!DiagLog::getEntry(index, entry)) {
+            continue;
+        }
+
+        char line[kMaxEventLineChars + 1];
+        snprintf(line, sizeof(line), "%lu.%01lu %s",
+                 static_cast<unsigned long>(entry.timestampMs / 1000),
+                 static_cast<unsigned long>((entry.timestampMs % 1000) / 100), entry.text);
+        _tft.drawString(line, 2, y);
+        y += kEventLineSpacing;
+    }
+
+    _shownEventSequence = eventSequence;
+    _screenDirty = false;
 }
 
 void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
                             const CurrentControl &current, const VoltageMonitor &voltage,
                             const PowerMonitor &power) {
+    if (_showEventLog) {
+        updateEventLog();
+        return;
+    }
+
+    if (_screenDirty) {
+        _tft.fillScreen(TFT_BLACK);
+        _tft.setTextSize(2);
+        _screenDirty = false;
+    }
+
+    updateStatus(pd, thermal, current, voltage, power);
+}
+
+void DisplayManager::updateStatus(PDManager &pd, const ThermalManager &thermal,
+                                  const CurrentControl &current, const VoltageMonitor &voltage,
+                                  const PowerMonitor &power) {
     const float pdVoltageV       = pd.getVoltage();
     const float pdCurrentA       = pd.getCurrent();
     const float measuredVoltageV = power.getInputVoltage();
@@ -39,7 +105,6 @@ void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
     const float inputUtilizationPct = allowedInputPowerW > 0.0f
         ? measuredInputPowerW / allowedInputPowerW * 100.0f
         : 0.0f;
-    const char *pdFaultText      = pd.getProtectionFaultText();
 
     // PD contract plus input.
     _tft.drawString("I " + String(pdVoltageV, 0) + "V/" + String(pdCurrentA, 1) + "A " +
@@ -54,7 +119,13 @@ void DisplayManager::update(PDManager &pd, const ThermalManager &thermal,
     // Temperature plus input-power utilization.
     _tft.drawString("T: " + String(tempC, 0) + "C Util: " + String(inputUtilizationPct, 0) + "%", 5, 95);
 
-    // Shutdown, chip fault, INA alert.
+    updateFaultStatus(pd, power);
+}
+
+void DisplayManager::updateFaultStatus(const PDManager &pd, const PowerMonitor &power) {
+    const char *pdFaultText = pd.getProtectionFaultText();
+
+    // Show the most important active fault.
     if (pd.isShutdownLatched()) {
         _tft.drawString("STOP: " + String(pd.getShutdownReason()) + "      ", 5, 118);
     } else if (pd.hasProtectionFault()) {
