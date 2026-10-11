@@ -31,11 +31,11 @@ void test_button1_emits_one_event_for_a_debounced_press() {
     events = buttons.poll();
     TEST_ASSERT_FALSE(events.button1Pressed);
 
-    testNowMs = 69;
+    testNowMs = 49;
     events = buttons.poll();
     TEST_ASSERT_FALSE(events.button1Pressed);
 
-    testNowMs = 70;
+    testNowMs = 50;
     events = buttons.poll();
     TEST_ASSERT_TRUE(events.button1Pressed);
 
@@ -62,10 +62,18 @@ void test_button2_emits_a_debounced_press_event() {
     ButtonManager::PressEvents events = buttons.poll();
     TEST_ASSERT_FALSE(events.button2Pressed);
 
-    testNowMs = 50;
+    testNowMs = 29;
+    events = buttons.poll();
+    TEST_ASSERT_FALSE(events.button2Pressed);
+
+    testNowMs = 30;
     events = buttons.poll();
     TEST_ASSERT_TRUE(events.button2Pressed);
     TEST_ASSERT_FALSE(events.button1Pressed);
+
+    testNowMs = 40;
+    events = buttons.poll();
+    TEST_ASSERT_FALSE(events.button2Pressed);
 }
 
 int main() {

@@ -161,7 +161,7 @@ static void updateInputPowerUtilization() {
 }
 
 static PeriodicTask displayTask(100, updateDisplay);
-static PeriodicTask buttonTask(40, handleButtonPresses);
+static PeriodicTask buttonTask(10, handleButtonPresses);
 static PeriodicTask thermalUpdateTask(1000, updateThermal);
 static PeriodicTask pdUpdateTask(50, updatePd);
 static PeriodicTask voltageUpdateTask(100, updateVoltage);

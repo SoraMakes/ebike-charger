@@ -3,7 +3,7 @@
 namespace {
 static constexpr uint8_t kButton1Pin = 0;  // T-Display Button 1.
 static constexpr uint8_t kButton2Pin = 35; // T-Display Button 2.
-static constexpr uint32_t kButtonDebounceMs = 40;
+static constexpr uint32_t kButtonDebounceMs = 20;
 }  // namespace
 
 void ButtonManager::begin() {
