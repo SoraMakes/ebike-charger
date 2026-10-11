@@ -8,8 +8,8 @@ static constexpr uint8_t kMaxStep = 127;
 static constexpr uint32_t kRampStepIntervalMs = 50;
 
 // Output-current calibration.
-static constexpr float kCurrentAtStepZeroA   = 0.14f;
-static constexpr float kCurrentPerStepA      = 0.0572f;
+static constexpr float kCurrentAtStepZeroA   = 0.0959f;
+static constexpr float kCurrentPerStepA      = 0.06011f;
 static constexpr float kMaxAllowedOutputAmps = 3.0f;
 
 // No-load hold step (~0.37A).

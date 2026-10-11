@@ -41,9 +41,32 @@ abgeschaltet werden, sondern nur nach dem Ausgang des Wandlers, da über den dig
 verbunden ist. Dadurch wird ein low side MOSFET vor dem VR umgangen
 
 
-# calibration
-output voltage
-3538: 40.8V
-4000: 45,7V
-3128: 36,5V
-2510: 29.9V
+# Calibration readings
+
+Voltage pairs are raw ADC counts from GPIO33's 219 kΩ / 4.86 kΩ divider and
+the corresponding measured output voltage. Current pairs are MCP4018 digipot
+steps and the corresponding measured output current.
+
+## Output voltage
+
+| ADC count | Measured output voltage (V) |
+|---:|---:|
+| 3538 | 40.8 |
+| 4000 | 45.7 |
+| 3128 | 36.5 |
+| 2510 | 29.9 |
+
+## Output current
+
+| Digipot step | Measured output current (A) |
+|---:|---:|
+| 0 | 0.100 |
+| 1 | 0.156 |
+| 2 | 0.216 |
+| 3 | 0.276 |
+| 4 | 0.335 |
+| 5 | 0.394 |
+| 10 | 0.696 |
+| 15 | 0.996 |
+| 20 | 1.300 |
+| 25 | 1.599 |
