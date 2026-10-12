@@ -125,7 +125,7 @@ uint8_t PDManager::pollInputs(uint8_t &opMode) {
 
     opMode = _pd.readOpMode();
     if (opMode != _lastOpMode) {
-        DiagLog::event("opmode 0x%02X", opMode);
+        // DiagLog::event("opmode 0x%02X", opMode);
         _lastOpMode = opMode;
     }
     if (status != _lastStatus) {

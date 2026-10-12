@@ -3,15 +3,20 @@
   "build": {
     "dockerfile": "Dockerfile"
   },
+  "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind,consistency=cached",
+  "workspaceFolder": "${localWorkspaceFolder}",
   "remoteUser": "vscode",
+  "remoteEnv": {
+     "PATH": "/home/vscode/.platformio/penv/bin:${containerEnv:PATH}"
+   },
   "mounts": [
-    "source=${localWorkspaceFolder}/..,target=/home/markus/projects,type=bind,readonly,consistency=cached",
+    "source=${localWorkspaceFolder}/..,target=${localWorkspaceFolder}/..,type=bind,readonly,consistency=cached",
     // Nested rw mount: worktree gitdir lives in the main repo's .git, which git must write to.
-    "source=${localEnv:HOME}/projects/charger_claude/.git,target=/home/markus/projects/charger_claude/.git,type=bind,consistency=cached",
+    "source=${localWorkspaceFolder}/.git,target=${localWorkspaceFolder}/.git,type=bind,consistency=cached",
     // Shares AGENTS.md, opencode.jsonc (MCP servers, agents) and key files.
     "source=${localEnv:HOME}/.config/opencode,target=/home/vscode/.config/opencode,type=bind,consistency=cached",
-    // Per-container sessions/DB, surviving rebuilds.
-    "source=opencode-${devcontainerId},target=/home/vscode/.local/share/opencode,type=volume"
+    // Shares OpenCode accounts, sessions, and database with the host.
+    "source=${localEnv:HOME}/.local/share/opencode,target=/home/vscode/.local/share/opencode,type=bind,consistency=cached"
   ],
   // Forwarding the in-container opencode port breaks the host's own service.
   "otherPortsAttributes": {

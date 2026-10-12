@@ -5,7 +5,7 @@
 static constexpr uint8_t kMCP4018Address = 0x2F; // hardware-fixed
 
 static constexpr uint8_t kMaxStep = 127;
-static constexpr uint32_t kRampStepIntervalMs = 50;
+static constexpr uint32_t kRampStepIntervalMs = 75;
 
 // Output-current calibration.
 static constexpr float kCurrentAtStepZeroA   = 0.18048f;
