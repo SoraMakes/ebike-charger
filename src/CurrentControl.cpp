@@ -6,6 +6,8 @@ static constexpr uint8_t kMCP4018Address = 0x2F; // hardware-fixed
 
 static constexpr uint8_t kMaxStep = 127;
 static constexpr uint32_t kRampStepIntervalMs = 75;
+static constexpr uint32_t kFinalRampStepIntervalMs = 500;
+static constexpr int16_t kFinalRampSlowdownSteps = 3;
 
 // Output-current calibration.
 static constexpr float kCurrentAtStepZeroA   = 0.13819f;
@@ -41,26 +43,55 @@ void CurrentControl::update(float limitWatts, bool noLoad, float maximumCurrentA
     if (noLoad && currentLimitDigipotStep > kNoLoadHoldStep) {
         _outputDigipotStep = kNoLoadHoldStep;
         _lastStepChangeAt = now;
+        _finalRampIncreasePending = false;
         writeDigipot(static_cast<uint8_t>(kNoLoadHoldStep));
         return;
     }
 
-    if (_outputDigipotStep > currentLimitDigipotStep) {
-        _outputDigipotStep = currentLimitDigipotStep;
-    } else if (_outputDigipotStep < currentLimitDigipotStep) {
-        if (now - _lastStepChangeAt >= kRampStepIntervalMs) {
-            _lastStepChangeAt = now;
-            ++_outputDigipotStep;
+    updateRamp(now);
+    writeDigipot(static_cast<uint8_t>(_outputDigipotStep));
+}
+
+void CurrentControl::updateRamp(uint32_t now) {
+    // Apply lower targets immediately and cancel any pending slow-ramp wait.
+    if (_outputDigipotStep >= _currentLimitDigipotStep) {
+        _outputDigipotStep = _currentLimitDigipotStep;
+        _finalRampIncreasePending = false;
+        return;
+    }
+
+    const int16_t remainingSteps = _currentLimitDigipotStep - _outputDigipotStep;
+    const bool slowRamp = remainingSteps <= kFinalRampSlowdownSteps;
+    if (slowRamp) {
+        if (!_finalRampIncreasePending) {
+            // Start the slower cadence when demand first reaches the final steps.
+            _finalRampRequestAt = now;
+            _finalRampIncreasePending = true;
+            return;
+        }
+        // Wait until the full final-step interval has elapsed.
+        if (now - _finalRampRequestAt < kFinalRampStepIntervalMs) {
+            return;
+        }
+
+        // Start a fresh slow interval after each final-step increase.
+        _finalRampRequestAt = now;
+    } else {
+        _finalRampIncreasePending = false;
+        if (now - _lastStepChangeAt < kRampStepIntervalMs) {
+            return;
         }
     }
 
-    writeDigipot(static_cast<uint8_t>(_outputDigipotStep));
+    _lastStepChangeAt = now;
+    ++_outputDigipotStep;
 }
 
 void CurrentControl::minimumCurrent() {
     _outputDigipotStep = 0;
     _currentLimitDigipotStep = 0;
     _lastStepChangeAt = millis();
+    _finalRampIncreasePending = false;
     writeDigipot(0);
 }
 

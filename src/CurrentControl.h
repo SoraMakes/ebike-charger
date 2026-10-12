@@ -34,7 +34,10 @@ private:
     int16_t  _currentLimitDigipotStep = 0;
     int16_t  _lastDigipotStep = -1;  // Last step acknowledged on I2C; -1 forces the initial write.
     uint32_t _lastStepChangeAt = 0;
+    uint32_t _finalRampRequestAt = 0;
+    bool _finalRampIncreasePending = false;
 
+    void    updateRamp(uint32_t now);
     void    writeDigipot(uint8_t step);
     static int16_t ampsToStep(float amps);
 };
