@@ -30,6 +30,7 @@ private:
     bool _showEventLog = false;
     bool _screenDirty = true;
     uint32_t _shownEventSequence = 0;
+    uint32_t _shownUptimeSeconds = 0;
 
     void updateStatus(PDManager &pd, const ThermalManager &thermal,
                       const CurrentControl &current, const VoltageMonitor &voltage,

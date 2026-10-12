@@ -42,7 +42,8 @@ void DisplayManager::toggleDisplayMode() {
 
 void DisplayManager::updateEventLog() {
     const uint32_t eventSequence = DiagLog::eventSequence();
-    if (!_screenDirty && eventSequence == _shownEventSequence) {
+    const uint32_t uptimeSeconds = millis() / 1000;
+    if (!_screenDirty && eventSequence == _shownEventSequence && uptimeSeconds == _shownUptimeSeconds) {
         return;
     }
 
@@ -68,7 +69,14 @@ void DisplayManager::updateEventLog() {
         y += kEventLineSpacing;
     }
 
+    char uptime[16];
+    snprintf(uptime, sizeof(uptime), " |%lu", static_cast<unsigned long>(uptimeSeconds));
+    _tft.setTextDatum(TR_DATUM);
+    _tft.drawString(uptime, 238, 0);
+    _tft.setTextDatum(TL_DATUM);
+
     _shownEventSequence = eventSequence;
+    _shownUptimeSeconds = uptimeSeconds;
     _screenDirty = false;
 }
 
