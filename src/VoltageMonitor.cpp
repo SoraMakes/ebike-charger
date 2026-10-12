@@ -39,7 +39,8 @@ void VoltageMonitor::update() {
     if (resetEma) {
         _voltageV = clampedVoltageV;
     } else {
-        _voltageV += kEmaAlpha * (clampedVoltageV - _voltageV);
+        const float alpha = clampedVoltageV > _voltageV ? kEmaRiseAlpha : kEmaFallAlpha;
+        _voltageV += alpha * (clampedVoltageV - _voltageV);
     }
 
     // Shut down when consecutive readings confirm overvoltage.

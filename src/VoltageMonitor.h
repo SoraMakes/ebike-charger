@@ -15,7 +15,8 @@ public:
     float getVoltage() const;
 
 private:
-    static constexpr float kEmaAlpha = 0.2f;
+    static constexpr float kEmaRiseAlpha = 0.5f;
+    static constexpr float kEmaFallAlpha = 0.1f;
     static constexpr float kEmaResetVoltageV = 5.5f;
     // Calibration fit floor for the measured output voltage.
     static constexpr float kCalibrationValidFromV = 2.0f;

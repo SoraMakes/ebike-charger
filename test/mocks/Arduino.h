@@ -14,9 +14,14 @@ static constexpr uint8_t INPUT_PULLUP = 0x02;
 static constexpr uint8_t OUTPUT = 0x03;
 static constexpr int LOW = 0;
 static constexpr int HIGH = 1;
+static constexpr uint8_t ADC_0db = 0;
 
 void pinMode(uint8_t pin, uint8_t mode);
 int digitalRead(uint8_t pin);
+void analogReadResolution(uint8_t bits);
+int analogRead(uint8_t pin);
+void analogSetPinAttenuation(uint8_t pin, uint8_t attenuation);
+bool ledcAttach(uint8_t pin, uint32_t frequency, uint8_t resolutionBits);
 uint32_t ledcSetup(uint8_t channel, uint32_t frequency, uint8_t resolutionBits);
 void ledcAttachPin(uint8_t pin, uint8_t channel);
 void ledcWrite(uint8_t channel, uint32_t duty);

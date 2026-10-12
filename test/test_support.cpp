@@ -1,12 +1,11 @@
 #include "mocks/Arduino.h"
 #include "test_support.h"
-#include "VoltageMonitor.h"
 #include "PDManager.h"
 
 uint32_t testNowMs = 0;
-float testOutputVoltageV = 10.0f;
 int testButton1Level = HIGH;
 int testButton2Level = HIGH;
+int testAdcReading = 0;
 FakeSerial Serial;
 
 uint32_t millis() {
@@ -33,8 +32,16 @@ int digitalRead(uint8_t pin) {
     return HIGH;
 }
 
-float VoltageMonitor::getVoltage() const {
-    return testOutputVoltageV;
+void analogReadResolution(uint8_t) {}
+
+int analogRead(uint8_t) {
+    return testAdcReading;
+}
+
+void analogSetPinAttenuation(uint8_t, uint8_t) {}
+
+bool ledcAttach(uint8_t, uint32_t, uint8_t) {
+    return true;
 }
 
 void PDManager::shutdown(const char *) {
