@@ -16,6 +16,20 @@ static constexpr uint16_t kMonitoredFaultMask =
     (1 << INA238_DIAG_TEMP_OVER_LIMIT) |
     (1 << INA238_DIAG_POWER_OVER_LIMIT);
 
+namespace {
+const char *formatAlertText(uint16_t faults) {
+    static char text[33];
+    text[0] = '\0';
+    if (faults & (1 << INA238_DIAG_SHUNT_OVER_LIMIT)) { strcat(text, "OCP "); }
+    if (faults & (1 << INA238_DIAG_SHUNT_UNDER_LIMIT)) { strcat(text, "SHUNT-UV "); }
+    if (faults & (1 << INA238_DIAG_BUS_OVER_LIMIT))   { strcat(text, "OVP "); }
+    if (faults & (1 << INA238_DIAG_BUS_UNDER_LIMIT))  { strcat(text, "UVP "); }
+    if (faults & (1 << INA238_DIAG_TEMP_OVER_LIMIT))  { strcat(text, "OTP "); }
+    if (faults & (1 << INA238_DIAG_POWER_OVER_LIMIT)) { strcat(text, "PWR-OV "); }
+    return text;
+}
+}  // namespace
+
 bool PowerMonitor::begin() {
     if (!_ina.begin() || _ina.getLastError() != 0) {
         _sensorFault = true;
@@ -57,12 +71,12 @@ void PowerMonitor::update() {
     _current = current;
     _consecutiveReadErrors = 0;
 
-    const uint16_t newlyLatchedFaults = diag & kMonitoredFaultMask & ~_alertSticky;
-    if (newlyLatchedFaults == 0) {
+    const uint16_t triggeredFaults = diag & kMonitoredFaultMask;
+    if (triggeredFaults == 0) {
         return;
     }
-    _alertSticky |= newlyLatchedFaults;
-    DiagLog::event("safety ina %s", getAlertText());
+    _alertSticky |= triggeredFaults;
+    DiagLog::event("safety ina %s", formatAlertText(triggeredFaults));
 }
 
 bool PowerMonitor::checkReadError(const char *measurement, bool validReading) {
@@ -94,13 +108,5 @@ float PowerMonitor::getInputVoltage() const { return _busVoltage; }
 float PowerMonitor::getInputCurrent() const { return _current; }
 
 const char *PowerMonitor::getAlertText() const {
-    static char text[33];
-    text[0] = '\0';
-    if (_alertSticky & (1 << INA238_DIAG_SHUNT_OVER_LIMIT)) { strcat(text, "OCP "); }
-    if (_alertSticky & (1 << INA238_DIAG_SHUNT_UNDER_LIMIT)) { strcat(text, "SHUNT-UV "); }
-    if (_alertSticky & (1 << INA238_DIAG_BUS_OVER_LIMIT))   { strcat(text, "OVP "); }
-    if (_alertSticky & (1 << INA238_DIAG_BUS_UNDER_LIMIT))  { strcat(text, "UVP "); }
-    if (_alertSticky & (1 << INA238_DIAG_TEMP_OVER_LIMIT))  { strcat(text, "OTP "); }
-    if (_alertSticky & (1 << INA238_DIAG_POWER_OVER_LIMIT)) { strcat(text, "PWR-OV "); }
-    return text;
+    return formatAlertText(_alertSticky);
 }

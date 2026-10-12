@@ -109,6 +109,34 @@ void test_negative_voltage_is_rejected_as_a_sensor_read_error() {
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f, monitor.getInputCurrent());
 }
 
+void test_protection_events_log_only_the_current_trigger() {
+    PowerMonitor monitor;
+    TEST_ASSERT_TRUE(monitor.begin());
+
+    FakeINA238::state().diagnostics = 1 << INA238_DIAG_SHUNT_OVER_LIMIT;
+    monitor.update();
+    TEST_ASSERT_TRUE(getTestSerialOutput().find("safety ina OCP") != std::string::npos);
+
+    clearTestSerialOutput();
+    FakeINA238::state().diagnostics = 1 << INA238_DIAG_BUS_OVER_LIMIT;
+    monitor.update();
+    TEST_ASSERT_TRUE(getTestSerialOutput().find("safety ina OVP") != std::string::npos);
+    TEST_ASSERT_TRUE(getTestSerialOutput().find("OCP") == std::string::npos);
+}
+
+void test_repeated_protection_occurrences_are_logged_again() {
+    PowerMonitor monitor;
+    TEST_ASSERT_TRUE(monitor.begin());
+
+    FakeINA238::state().diagnostics = 1 << INA238_DIAG_SHUNT_OVER_LIMIT;
+    monitor.update();
+    clearTestSerialOutput();
+    FakeINA238::state().diagnostics = 1 << INA238_DIAG_SHUNT_OVER_LIMIT;
+    monitor.update();
+
+    TEST_ASSERT_TRUE(getTestSerialOutput().find("safety ina OCP") != std::string::npos);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_faults_after_four_consecutive_failed_updates);
@@ -116,5 +144,7 @@ int main() {
     RUN_TEST(test_failed_read_keeps_last_complete_measurements);
     RUN_TEST(test_negative_current_is_rejected_as_a_sensor_read_error);
     RUN_TEST(test_negative_voltage_is_rejected_as_a_sensor_read_error);
+    RUN_TEST(test_protection_events_log_only_the_current_trigger);
+    RUN_TEST(test_repeated_protection_occurrences_are_logged_again);
     return UNITY_END();
 }

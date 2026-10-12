@@ -70,7 +70,12 @@ public:
     }
 
     uint16_t getDiagnoseAlert() {
-        return read(FakeINA238::Read::Diagnostics) ? 0 : FakeINA238::state().diagnostics;
+        if (read(FakeINA238::Read::Diagnostics)) {
+            return 0;
+        }
+        const uint16_t diagnostics = FakeINA238::state().diagnostics;
+        FakeINA238::state().diagnostics = 0;
+        return diagnostics;
     }
 
     int getLastError() {
