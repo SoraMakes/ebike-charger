@@ -40,7 +40,7 @@ void PowerMonitor::update() {
     }
 
     const float busVoltage = _ina.getBusVoltage();
-    if (!checkReadError("voltage")) {
+    if (!checkReadError("voltage", busVoltage >= 0.0f)) {
         return;
     }
     const float current = _ina.getAmpere();
