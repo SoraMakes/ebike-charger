@@ -14,6 +14,7 @@
 // TTGO T-Display I2C pins.
 static constexpr int      I2C_SDA_PIN              = 21;
 static constexpr int      I2C_SCL_PIN              = 22;
+static constexpr uint16_t kI2cTimeoutMs            = 10;
 static constexpr size_t   kSerialTxBufferSizeBytes = 2048;
 
 // Digital pins.
@@ -160,7 +161,7 @@ static void updateInputPowerUtilization() {
                                            noLoad);
 }
 
-static PeriodicTask displayTask(100, updateDisplay);
+static PeriodicTask displayTask(250, updateDisplay);
 static PeriodicTask buttonTask(10, handleButtonPresses);
 static PeriodicTask thermalUpdateTask(1000, updateThermal);
 static PeriodicTask pdUpdateTask(50, updatePd);
@@ -182,6 +183,8 @@ void setup() {
     chargingCurrentLimit.begin();
     buttonManager.begin();
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+    // Keep failed I2C transactions from stalling the control loop.
+    Wire.setTimeOut(kI2cTimeoutMs);
 
     currentControl.begin(Wire, voltageMonitor);
     displayManager.begin();

@@ -14,19 +14,13 @@ static constexpr uint32_t kFanPwmFrequencyHz = 16000;
 static constexpr uint16_t kFanMinimumDuty = static_cast<uint16_t>(kPwmRange * 0.55f);
 static constexpr uint16_t kFanFullDuty = kPwmRange;
 
-// Fan PWM channel.
-static constexpr uint8_t kFanLedcChannel = 0;
-
 void ThermalManager::begin(uint8_t fanPin, PDManager &pdManager) {
     _pdManager = &pdManager;
-    const uint32_t configuredFrequency = ledcSetup(kFanLedcChannel, kFanPwmFrequencyHz, 10);
-    if (configuredFrequency == 0) {
+    _fanPin = fanPin;
+    if (!ledcAttach(fanPin, kFanPwmFrequencyHz, 10)) {
         enterShutdown("fan pwm");
         return;
     }
-    pinMode(fanPin, OUTPUT);
-    // pinMode before attach.
-    ledcAttachPin(fanPin, kFanLedcChannel);
 
     applyFanPwm(0);
     _sensorFault = !_sensor.begin(0x76);
@@ -108,7 +102,7 @@ bool ThermalManager::hasSensorFault() const {
 }
 
 void ThermalManager::applyFanPwm(uint16_t duty) const {
-    ledcWrite(kFanLedcChannel, duty);
+    ledcWrite(_fanPin, duty);
 }
 
 void ThermalManager::enterShutdown(const char *reason) {
