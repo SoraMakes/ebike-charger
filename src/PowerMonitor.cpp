@@ -44,7 +44,7 @@ void PowerMonitor::update() {
         return;
     }
     const float current = _ina.getAmpere();
-    if (!checkReadError("current")) {
+    if (!checkReadError("current", current >= 0.0f)) {
         return;
     }
     // Reading the diagnostic register clears the INA238 alert status.
@@ -65,18 +65,24 @@ void PowerMonitor::update() {
     DiagLog::event("safety ina %s", getAlertText());
 }
 
-bool PowerMonitor::checkReadError(const char *measurement) {
+bool PowerMonitor::checkReadError(const char *measurement, bool validReading) {
     const int error = _ina.getLastError();
-    if (error == 0) {
+    if (error == 0 && validReading) {
         return true;
     }
 
     ++_consecutiveReadErrors;
     if (_consecutiveReadErrors == kReadErrorsBeforeShutdown - 2 ||
         _consecutiveReadErrors == kReadErrorsBeforeShutdown - 1) {
-        DiagLog::event("ina %s read error %d (%u/%u)", measurement, error,
-                       static_cast<unsigned>(_consecutiveReadErrors),
-                       static_cast<unsigned>(kReadErrorsBeforeShutdown));
+        if (error == 0) {
+            DiagLog::event("ina %s invalid reading (%u/%u)", measurement,
+                           static_cast<unsigned>(_consecutiveReadErrors),
+                           static_cast<unsigned>(kReadErrorsBeforeShutdown));
+        } else {
+            DiagLog::event("ina %s read error %d (%u/%u)", measurement, error,
+                           static_cast<unsigned>(_consecutiveReadErrors),
+                           static_cast<unsigned>(kReadErrorsBeforeShutdown));
+        }
     }
     if (_consecutiveReadErrors >= kReadErrorsBeforeShutdown) {
         _sensorFault = true;

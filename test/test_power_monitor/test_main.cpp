@@ -79,10 +79,26 @@ void test_failed_read_keeps_last_complete_measurements() {
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.7f, monitor.getInputCurrent());
 }
 
+void test_negative_current_is_rejected_as_a_sensor_read_error() {
+    PowerMonitor monitor;
+    TEST_ASSERT_TRUE(monitor.begin());
+    monitor.update();
+
+    FakeINA238::state().current = -0.1f;
+    for (uint8_t errorCount = 0; errorCount < 4; ++errorCount) {
+        monitor.update();
+    }
+
+    TEST_ASSERT_TRUE(monitor.hasSensorFault());
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 20.0f, monitor.getInputVoltage());
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f, monitor.getInputCurrent());
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_faults_after_four_consecutive_failed_updates);
     RUN_TEST(test_successful_update_resets_consecutive_error_count);
     RUN_TEST(test_failed_read_keeps_last_complete_measurements);
+    RUN_TEST(test_negative_current_is_rejected_as_a_sensor_read_error);
     return UNITY_END();
 }

@@ -24,7 +24,7 @@ public:
     const char *getAlertText() const;
 
 private:
-    bool checkReadError(const char *measurement);
+    bool checkReadError(const char *measurement, bool validReading = true);
 
     INA238 _ina{0x40};
     float _busVoltage = 0.0f;

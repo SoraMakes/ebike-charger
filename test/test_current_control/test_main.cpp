@@ -49,6 +49,21 @@ void test_digipot_increases_one_step_per_interval() {
     TEST_ASSERT_EQUAL_INT16(2, control.getDigipotStep());
 }
 
+void test_output_current_uses_average_calibration() {
+    TwoWire wire(0);
+    VoltageMonitor voltage;
+    PDManager pdManager;
+    initializeVoltage(voltage, pdManager);
+    CurrentControl control;
+    control.begin(wire, voltage);
+
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.13819f, control.getCurrentLimitA());
+
+    testNowMs = 75;
+    control.update(100.0f, false, 4.0f);
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.1987212f, control.getCurrentLimitA());
+}
+
 void test_limited_mode_caps_output_current_at_two_amps() {
     TwoWire wire(0);
     VoltageMonitor voltage;
@@ -87,6 +102,7 @@ int main() {
     UNITY_BEGIN();
     RUN_TEST(test_digipot_does_not_step_before_75_ms);
     RUN_TEST(test_digipot_increases_one_step_per_interval);
+    RUN_TEST(test_output_current_uses_average_calibration);
     RUN_TEST(test_limited_mode_caps_output_current_at_two_amps);
     RUN_TEST(test_unlimited_mode_retains_four_amp_hardware_cap);
     return UNITY_END();

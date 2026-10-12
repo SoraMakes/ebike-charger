@@ -8,8 +8,8 @@ static constexpr uint8_t kMaxStep = 127;
 static constexpr uint32_t kRampStepIntervalMs = 75;
 
 // Output-current calibration.
-static constexpr float kCurrentAtStepZeroA   = 0.18048f;
-static constexpr float kCurrentPerStepA      = 0.0609524f;
+static constexpr float kCurrentAtStepZeroA   = 0.13819f;
+static constexpr float kCurrentPerStepA      = 0.0605312f;
 // Absolute firmware cap; update() also applies the mode-selected limit.
 static constexpr float kMaxAllowedOutputAmps = 4.0f;
 
