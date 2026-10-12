@@ -35,7 +35,7 @@ static ButtonManager       buttonManager;
 static InputPowerUtilizationController inputPowerUtilizationController;
 
 static constexpr float kElectronicsPowerW          = 1.0f;  // Electronics overhead. Measured: 0.7W idle (.55 fan), 1.3W max fan
-static constexpr float kNoLoadInputW               = 5.0f;  // Treat PD-input power below this threshold as no load.
+static constexpr float kNoLoadInputW               = 2.5f;  // Treat PD-input power below this threshold as no load.
 static constexpr uint32_t kPowerFeedbackIntervalMs = 25;  // Runs between current-ramp steps. Current rampup loop runs inside it
 
 class PeriodicTask {
