@@ -21,7 +21,7 @@ void test_temperature_sensor_recovers_after_one_failed_read() {
 
     TEST_ASSERT_TRUE(thermal.hasSensorFault());
     TEST_ASSERT_FALSE(pd.isShutdownLatched());
-    TEST_ASSERT_TRUE(getTestSerialOutput().empty());
+    TEST_ASSERT_TRUE(getTestSerialOutput().find("temp read error 1/2") != std::string::npos);
 
     Adafruit_BMP280::state().temperatureC = 25.0f;
     thermal.update();
@@ -30,14 +30,15 @@ void test_temperature_sensor_recovers_after_one_failed_read() {
     TEST_ASSERT_FALSE(pd.isShutdownLatched());
 }
 
-void test_temperature_sensor_logs_and_shuts_down_on_second_failure() {
+void test_temperature_sensor_logs_first_failure_and_shuts_down_on_second() {
     PDManager pd;
     ThermalManager thermal;
     thermal.begin(12, pd);
     Adafruit_BMP280::state().temperatureC = NAN;
 
     thermal.update();
-    TEST_ASSERT_TRUE(getTestSerialOutput().empty());
+    TEST_ASSERT_FALSE(pd.isShutdownLatched());
+    TEST_ASSERT_TRUE(getTestSerialOutput().find("temp read error 1/2") != std::string::npos);
 
     thermal.update();
     TEST_ASSERT_TRUE(pd.isShutdownLatched());
@@ -56,8 +57,9 @@ void test_successful_read_resets_consecutive_failure_count() {
     thermal.update();
 
     Adafruit_BMP280::state().temperatureC = NAN;
+    clearTestSerialOutput();
     thermal.update();
-    TEST_ASSERT_TRUE(getTestSerialOutput().empty());
+    TEST_ASSERT_TRUE(getTestSerialOutput().find("temp read error 1/2") != std::string::npos);
 
     thermal.update();
     TEST_ASSERT_TRUE(pd.isShutdownLatched());
@@ -67,7 +69,7 @@ void test_successful_read_resets_consecutive_failure_count() {
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_temperature_sensor_recovers_after_one_failed_read);
-    RUN_TEST(test_temperature_sensor_logs_and_shuts_down_on_second_failure);
+    RUN_TEST(test_temperature_sensor_logs_first_failure_and_shuts_down_on_second);
     RUN_TEST(test_successful_read_resets_consecutive_failure_count);
     return UNITY_END();
 }

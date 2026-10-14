@@ -23,10 +23,11 @@ void test_faults_after_four_consecutive_failed_updates() {
         monitor.update();
         TEST_ASSERT_FALSE(monitor.hasSensorFault());
         if (errorCount == 1) {
-            TEST_ASSERT_TRUE(getTestSerialOutput().empty());
+            TEST_ASSERT_TRUE(getTestSerialOutput().find("1/4") != std::string::npos);
         }
         if (errorCount == 2) {
             TEST_ASSERT_TRUE(getTestSerialOutput().find("2/4") != std::string::npos);
+            clearTestSerialOutput();
         }
         if (errorCount == 3) {
             TEST_ASSERT_TRUE(getTestSerialOutput().find("3/4") != std::string::npos);
@@ -57,7 +58,7 @@ void test_successful_update_resets_consecutive_error_count() {
     monitor.update();
 
     TEST_ASSERT_FALSE(monitor.hasSensorFault());
-    TEST_ASSERT_TRUE(getTestSerialOutput().empty());
+    TEST_ASSERT_TRUE(getTestSerialOutput().find("1/4") != std::string::npos);
 }
 
 void test_failed_read_keeps_last_complete_measurements() {

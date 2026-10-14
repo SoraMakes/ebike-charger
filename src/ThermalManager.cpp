@@ -43,7 +43,7 @@ void ThermalManager::update() {
     if (!temperatureValid) {
         _sensorFault = true;
         ++_consecutiveTemperatureReadErrors;
-        if (_consecutiveTemperatureReadErrors == kReadErrorsBeforeShutdown) {
+        if (_consecutiveTemperatureReadErrors == 1 || _consecutiveTemperatureReadErrors == kReadErrorsBeforeShutdown) {
             DiagLog::event("temp read error %u/%u",
                            static_cast<unsigned>(_consecutiveTemperatureReadErrors),
                            static_cast<unsigned>(kReadErrorsBeforeShutdown));

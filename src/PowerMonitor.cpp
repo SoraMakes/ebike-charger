@@ -86,7 +86,8 @@ bool PowerMonitor::checkReadError(const char *measurement, bool validReading) {
     }
 
     ++_consecutiveReadErrors;
-    if (_consecutiveReadErrors == kReadErrorsBeforeShutdown - 2 ||
+    if (_consecutiveReadErrors == kReadErrorsBeforeShutdown - 3 ||
+        _consecutiveReadErrors == kReadErrorsBeforeShutdown - 2 ||
         _consecutiveReadErrors == kReadErrorsBeforeShutdown - 1) {
         if (error == 0) {
             DiagLog::event("ina %s invalid reading (%u/%u)", measurement,
