@@ -28,8 +28,8 @@ void test_restores_saved_unlimited_mode_and_logs_it() {
     limit.begin();
 
     TEST_ASSERT_FALSE(limit.isLimited());
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 4.0f, limit.maximumCurrentA());
-    TEST_ASSERT_TRUE(getTestSerialOutput().find("current limit boot: unlimited 4A") != std::string::npos);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 5.0f, limit.maximumCurrentA());
+    TEST_ASSERT_TRUE(getTestSerialOutput().find("current limit boot: unlimited 5A") != std::string::npos);
 }
 
 void test_toggle_logs_and_persists_across_reinitialization() {
@@ -40,12 +40,12 @@ void test_toggle_logs_and_persists_across_reinitialization() {
     limit.toggle();
     TEST_ASSERT_FALSE(limit.isLimited());
     TEST_ASSERT_FALSE(Preferences::state().limited);
-    TEST_ASSERT_TRUE(getTestSerialOutput().find("current limit: unlimited 4A") != std::string::npos);
+    TEST_ASSERT_TRUE(getTestSerialOutput().find("current limit: unlimited 5A") != std::string::npos);
 
     ChargingCurrentLimit rebootedLimit;
     rebootedLimit.begin();
     TEST_ASSERT_FALSE(rebootedLimit.isLimited());
-    TEST_ASSERT_TRUE(getTestSerialOutput().find("current limit boot: unlimited 4A") != std::string::npos);
+    TEST_ASSERT_TRUE(getTestSerialOutput().find("current limit boot: unlimited 5A") != std::string::npos);
 
     clearTestSerialOutput();
     rebootedLimit.toggle();
@@ -65,8 +65,8 @@ void test_missing_storage_defaults_to_two_amps_and_logs_failure() {
     TEST_ASSERT_TRUE(getTestSerialOutput().find("current limit boot: limited 2A (NVS fail)") != std::string::npos);
     limit.toggle();
     TEST_ASSERT_FALSE(limit.isLimited());
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 4.0f, limit.maximumCurrentA());
-    TEST_ASSERT_TRUE(getTestSerialOutput().find("current limit: unlimited 4A") != std::string::npos);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 5.0f, limit.maximumCurrentA());
+    TEST_ASSERT_TRUE(getTestSerialOutput().find("current limit: unlimited 5A") != std::string::npos);
     TEST_ASSERT_TRUE(getTestSerialOutput().find("current limit save failed") != std::string::npos);
 }
 
@@ -83,7 +83,7 @@ void test_write_failure_still_applies_toggle_and_logs_failure() {
     TEST_ASSERT_FALSE(limit.isLimited());
     TEST_ASSERT_TRUE(Preferences::state().limited);
     TEST_ASSERT_TRUE(getTestSerialOutput().find("current limit save failed") != std::string::npos);
-    TEST_ASSERT_TRUE(getTestSerialOutput().find("current limit: unlimited 4A") != std::string::npos);
+    TEST_ASSERT_TRUE(getTestSerialOutput().find("current limit: unlimited 5A") != std::string::npos);
 }
 
 int main() {

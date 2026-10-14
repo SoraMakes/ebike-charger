@@ -117,7 +117,7 @@ void test_limited_mode_caps_output_current_at_two_amps() {
     TEST_ASSERT_TRUE(control.getCurrentLimitA() > 1.8f);
 }
 
-void test_unlimited_mode_retains_four_amp_hardware_cap() {
+void test_unlimited_mode_respects_five_amp_hardware_cap() {
     TwoWire wire(0);
     VoltageMonitor voltage;
     PDManager pdManager;
@@ -127,11 +127,11 @@ void test_unlimited_mode_retains_four_amp_hardware_cap() {
 
     for (uint8_t step = 0; step < 100; ++step) {
         testNowMs += 75;
-        control.update(1000.0f, false, 4.0f);
+        control.update(1000.0f, false, 6.0f);
     }
 
-    TEST_ASSERT_TRUE(control.getCurrentLimitA() <= 4.0f);
-    TEST_ASSERT_TRUE(control.getCurrentLimitA() > 3.8f);
+    TEST_ASSERT_TRUE(control.getCurrentLimitA() <= 5.0f);
+    TEST_ASSERT_TRUE(control.getCurrentLimitA() > 4.8f);
 }
 
 int main() {
@@ -141,6 +141,6 @@ int main() {
     RUN_TEST(test_final_three_steps_require_500_ms_of_continuous_demand);
     RUN_TEST(test_output_current_uses_average_calibration);
     RUN_TEST(test_limited_mode_caps_output_current_at_two_amps);
-    RUN_TEST(test_unlimited_mode_retains_four_amp_hardware_cap);
+    RUN_TEST(test_unlimited_mode_respects_five_amp_hardware_cap);
     return UNITY_END();
 }

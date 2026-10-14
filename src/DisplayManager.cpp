@@ -119,7 +119,7 @@ void DisplayManager::updateStatus(PDManager &pd, const ThermalManager &thermal,
 
     // Put measured input voltage and current below the contract line.
     _tft.setTextSize(1);
-    _tft.drawString("Actual: " + String(measuredVoltageV, 1) + "V " + String(measuredCurrentA, 1) + "A  ", 5, 23);
+    _tft.drawString("Actual: " + String(measuredVoltageV, 1) + "V " + String(measuredCurrentA, 1) + "A " + String(measuredInputPowerW, 0) + "W  ", 5, 23);
     _tft.setTextSize(2);
 
     // Show output voltage, estimated current, and power.

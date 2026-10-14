@@ -13,7 +13,7 @@ static constexpr int16_t kFinalRampSlowdownSteps = 3;
 static constexpr float kCurrentAtStepZeroA   = 0.13819f;
 static constexpr float kCurrentPerStepA      = 0.0605312f;
 // Absolute firmware cap; update() also applies the mode-selected limit.
-static constexpr float kMaxAllowedOutputAmps = 4.0f;
+static constexpr float kMaxAllowedOutputAmps = 5.0f;
 
 // No-load hold step (~0.37A).
 static constexpr int16_t kNoLoadHoldStep = 4;
@@ -76,6 +76,7 @@ void CurrentControl::updateRamp(uint32_t now) {
 
         // Start a fresh slow interval after each final-step increase.
         _finalRampRequestAt = now;
+        // Fall through to apply the step below.
     } else {
         _finalRampIncreasePending = false;
         if (now - _lastStepChangeAt < kRampStepIntervalMs) {

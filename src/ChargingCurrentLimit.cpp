@@ -7,10 +7,10 @@ namespace {
     static constexpr char kPreferencesNamespace[] = "charger";
     static constexpr char kCurrentLimitKey[] = "limited";
     static constexpr float kLimitedCurrentA = 2.0f;
-    static constexpr float kUnlimitedCurrentA = 4.0f;
+    static constexpr float kUnlimitedCurrentA = 5.0f;
 
     const char *modeName(bool limited) {
-        return limited ? "limited 2A" : "unlimited 4A";
+        return limited ? "limited 2A" : "unlimited 5A";
     }
 } // namespace
 
