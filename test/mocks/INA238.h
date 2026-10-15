@@ -21,6 +21,7 @@ enum class Read : uint8_t {
     None,
     Voltage,
     Current,
+    Temperature,
     Diagnostics,
 };
 
@@ -28,6 +29,7 @@ struct State {
     bool connected = true;
     float busVoltage = 20.0f;
     float current = 0.5f;
+    float temperatureC = 25.0f;
     uint16_t diagnostics = 0;
     Read failingRead = Read::None;
     uint8_t failuresRemaining = 0;
@@ -67,6 +69,10 @@ public:
 
     float getAmpere() {
         return read(FakeINA238::Read::Current) ? 0.0f : FakeINA238::state().current;
+    }
+
+    float getTemperature() {
+        return read(FakeINA238::Read::Temperature) ? 0.0f : FakeINA238::state().temperatureC;
     }
 
     uint16_t getDiagnoseAlert() {

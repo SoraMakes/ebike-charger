@@ -16,6 +16,8 @@ public:
     float getInputVoltage() const;
     /// Return the most recently sampled input current in amperes.
     float getInputCurrent() const;
+    /// Return the most recently sampled INA238 die temperature in Celsius.
+    float getTemperatureC() const;
     /// Return true if any monitored alert has been latched.
     bool hasAlert() const { return _alertSticky != 0; }
     /// Return true after an INA initialization or read failure.
@@ -29,6 +31,7 @@ private:
     INA238 _ina{0x40};
     float _busVoltage = 0.0f;
     float _current    = 0.0f;
+    float _temperatureC = 25.0f;
     uint16_t _alertSticky = 0;
     uint8_t _consecutiveReadErrors = 0;
     bool _sensorFault = false;

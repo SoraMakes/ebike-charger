@@ -8,6 +8,9 @@ static constexpr float    kShuntResistorOhm = 0.005f;
 // Overcurrent alert includes headroom for inrush.
 static constexpr uint32_t kOverCurrentLimitMa = 6500;
 static constexpr uint8_t kReadErrorsBeforeShutdown = 4;
+// INA238 die temperature measurement range from the datasheet.
+static constexpr float kSensorMinimumTemperatureC = -40.0f;
+static constexpr float kSensorMaximumTemperatureC = 125.0f;
 static constexpr uint16_t kMonitoredFaultMask =
     (1 << INA238_DIAG_SHUNT_OVER_LIMIT) |
     (1 << INA238_DIAG_SHUNT_UNDER_LIMIT) |
@@ -61,6 +64,12 @@ void PowerMonitor::update() {
     if (!checkReadError("current", current >= 0.0f)) {
         return;
     }
+    const float temperature = _ina.getTemperature();
+    if (!checkReadError("temperature",
+                         temperature >= kSensorMinimumTemperatureC &&
+                         temperature <= kSensorMaximumTemperatureC)) {
+        return;
+    }
     // Reading the diagnostic register clears the INA238 alert status.
     const uint16_t diag = _ina.getDiagnoseAlert();
     if (!checkReadError("diagnostics")) {
@@ -69,6 +78,7 @@ void PowerMonitor::update() {
     // Commit readings only after all I2C reads succeed, preserving the last complete sample on error.
     _busVoltage = busVoltage;
     _current = current;
+    _temperatureC = temperature;
     _consecutiveReadErrors = 0;
 
     const uint16_t triggeredFaults = diag & kMonitoredFaultMask;
@@ -107,6 +117,7 @@ bool PowerMonitor::checkReadError(const char *measurement, bool validReading) {
 
 float PowerMonitor::getInputVoltage() const { return _busVoltage; }
 float PowerMonitor::getInputCurrent() const { return _current; }
+float PowerMonitor::getTemperatureC() const { return _temperatureC; }
 
 const char *PowerMonitor::getAlertText() const {
     return formatAlertText(_alertSticky);

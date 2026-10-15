@@ -110,6 +110,43 @@ void test_negative_voltage_is_rejected_as_a_sensor_read_error() {
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f, monitor.getInputCurrent());
 }
 
+void test_temperature_is_reported_from_the_sensor() {
+    PowerMonitor monitor;
+    TEST_ASSERT_TRUE(monitor.begin());
+    FakeINA238::state().temperatureC = 41.5f;
+
+    monitor.update();
+
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 41.5f, monitor.getTemperatureC());
+}
+
+void test_failed_temperature_read_keeps_last_value() {
+    PowerMonitor monitor;
+    TEST_ASSERT_TRUE(monitor.begin());
+    FakeINA238::state().temperatureC = 33.0f;
+    monitor.update();
+
+    FakeINA238::state().failingRead = FakeINA238::Read::Temperature;
+    FakeINA238::state().failuresRemaining = 1;
+    monitor.update();
+
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 33.0f, monitor.getTemperatureC());
+}
+
+void test_implausible_temperature_is_rejected_as_a_sensor_read_error() {
+    PowerMonitor monitor;
+    TEST_ASSERT_TRUE(monitor.begin());
+    monitor.update();
+    FakeINA238::state().temperatureC = 200.0f;
+
+    for (uint8_t errorCount = 0; errorCount < 4; ++errorCount) {
+        monitor.update();
+    }
+
+    TEST_ASSERT_TRUE(monitor.hasSensorFault());
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 25.0f, monitor.getTemperatureC());
+}
+
 void test_protection_events_log_only_the_current_trigger() {
     PowerMonitor monitor;
     TEST_ASSERT_TRUE(monitor.begin());
@@ -145,6 +182,9 @@ int main() {
     RUN_TEST(test_failed_read_keeps_last_complete_measurements);
     RUN_TEST(test_negative_current_is_rejected_as_a_sensor_read_error);
     RUN_TEST(test_negative_voltage_is_rejected_as_a_sensor_read_error);
+    RUN_TEST(test_temperature_is_reported_from_the_sensor);
+    RUN_TEST(test_failed_temperature_read_keeps_last_value);
+    RUN_TEST(test_implausible_temperature_is_rejected_as_a_sensor_read_error);
     RUN_TEST(test_protection_events_log_only_the_current_trigger);
     RUN_TEST(test_repeated_protection_occurrences_are_logged_again);
     return UNITY_END();

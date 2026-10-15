@@ -115,7 +115,7 @@ static void logSystemDiagnostics() {
     const char *inaAlert = powerMonitor.getAlertText();
     const char *pdFault = pdManager.getProtectionFaultText();
     const bool hasInaAlert = (inaAlert != nullptr && inaAlert[0] != '\0');
-    Serial.printf("[PD] st=%s contract=%.1fV/%.2fA opmode=0x%02X msgrlt=%u sticky=0x%02X%s%s%s%s ina=%.2fV/%.2fA out=%.2fV pot=%d temp=%.1fC thlimfac=%.2f\n",
+    Serial.printf("[PD] st=%s contract=%.1fV/%.2fA opmode=0x%02X msgrlt=%u sticky=0x%02X%s%s%s%s ina=%.2fV/%.2fA out=%.2fV pot=%d temp=%.1fC inatemp=%.1fC thlimfac=%.2f\n",
         kStateNames[static_cast<uint8_t>(pdManager.getState())],
         pdManager.getVoltage(), 
         pdManager.getCurrent(),
@@ -129,6 +129,7 @@ static void logSystemDiagnostics() {
         voltageMonitor.getVoltage(),
         currentControl.getDigipotStep(),
         thermalManager.getTemperatureC(),
+        powerMonitor.getTemperatureC(),
         thermalManager.getOutputPowerLimitFactor());
 }
 
