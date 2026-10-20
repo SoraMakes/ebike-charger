@@ -17,5 +17,5 @@ private:
     static constexpr float kMaxOutputPowerFactor = 1.0f;
     // Step added to the output-power factor while utilization is below target.
     static constexpr float kFactorIncrease = 0.005f;
-    static constexpr float kTargetUtilization = 0.99f;
+    static constexpr float kTargetUtilization = 1.00f;
 };
