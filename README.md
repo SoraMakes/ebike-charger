@@ -40,13 +40,6 @@ The serial monitor uses **115200 baud**. The required libraries are declared in
 - Button 2 toggles between a 2 A limit and "unlimited". The 2 A is shown
   on the status display; the selected mode is saved across power losses.
 
-## TODOs:
-
-- Spannungswandler Steuerung auf positive side controlled umstellen. Mit negeative side kann nicht der ganze Wandler
-abgeschaltet werden, sondern nur nach dem Ausgang des Wandlers, da über den digipot GND des VR mit dem allgemeinen GND
-verbunden ist. Dadurch wird ein low side MOSFET vor dem VR umgangen
-
-
 # Calibration readings
 
 Voltage pairs are raw ADC counts from GPIO33's 219 kΩ / 4.86 kΩ divider and
